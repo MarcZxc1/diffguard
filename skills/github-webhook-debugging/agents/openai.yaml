@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Webhook Debugging"
+  short_description: "Test and troubleshoot signed GitHub webhooks"
+  default_prompt: "Use $github-webhook-debugging to diagnose this DiffGuard GitHub webhook request."

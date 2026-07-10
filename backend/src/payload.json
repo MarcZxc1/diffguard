@@ -1,0 +1,14 @@
+{
+  "action": "opened",
+  "installation": {
+    "id": 123456
+  },
+  "repository": {
+    "full_name": "MarcZxc1/diffguard-demo"
+  },
+  "pull_request": {
+    "number": 1,
+    "title": "Test vulnerable PR",
+    "html_url": "https://github.com/MarcZxc1/diffguard-demo/pull/1"
+  }
+}
