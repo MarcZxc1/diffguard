@@ -8,6 +8,6 @@ The current MVP foundation includes secure webhook signature verification and da
 
 ## Development
 
-The backend uses Bun, Express, Prisma, PostgreSQL, and Redis. The frontend uses React, Vite, and Tailwind CSS. Test.
+The backend uses Bun, Express, Prisma, PostgreSQL, and Redis. The frontend uses React, Vite, and Tailwind CSS. Test1.
 
 Read the guides in [`docs/`](docs/README.md) before contributing. Local secrets belong in `backend/.env` and must never be committed.
