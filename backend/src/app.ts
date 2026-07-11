@@ -5,6 +5,8 @@ import { errorHandler, notFoundHandler } from "./middlewares/error.middleware";
 import { authRouter } from "./routes/auth.routes";
 import { githubWebhookRouter } from "./routes/github-webhooks.routes";
 import { healthRouter } from "./routes/health.routes";
+import { reviewRunRouter } from "./routes/review-run.routes";
+import { repositoryRouter } from "./routes/repository.routes";
 import { userRouter } from "./routes/user.routes";
 
 export function createApp() {
@@ -21,6 +23,8 @@ export function createApp() {
   app.use("/api/health", healthRouter);
   app.use("/api/users", userRouter);
   app.use("/api/auth", authRouter);
+  app.use("/api/review-runs", reviewRunRouter);
+  app.use("/api/repositories", repositoryRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

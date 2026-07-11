@@ -18,23 +18,25 @@ DiffGuard must describe its actual coverage precisely. Until multiple security r
 
 ## Current Baseline
 
-The current MVP:
+The current implementation:
 
 - Verifies raw-body HMAC SHA-256 webhook signatures.
 - Accepts `pull_request.opened` and `pull_request.synchronize`.
 - Validates the installation ID and authenticates as a GitHub App.
-- Persists delivery IDs to reject duplicate processing.
-- Fetches the first page of changed files.
-- Parses available unified patches.
-- Detects a narrow set of likely hardcoded secrets on added lines.
-- Posts up to three inline review comments.
-- Has 29 passing backend tests, including route-level and infrastructure lifecycle coverage.
+- Persists installations, repositories, deliveries, review runs, findings, retry state, and comment publication state.
+- Acknowledges supported deliveries after atomic durable enqueue and processes them in a database-backed worker.
+- Fetches up to 30 pages of changed files and explicitly records partial coverage.
+- Runs seven focused security rule families and one separate repository-policy rule through a versioned contract.
+- Supports repository rule enablement, severity thresholds, ignored paths, and reasoned suppressions.
+- Posts at most three inline security comments with stable fingerprint-marker deduplication.
+- Exposes sanitized review-run state to authenticated administrators.
+- Has 62 passing backend tests covering the Phase 0–2 contracts.
 
 Known remaining debt:
 
-- Deliveries are marked as received before analysis succeeds, so a failed review cannot safely resume from the same delivery.
-- Webhook processing performs GitHub API and analysis work synchronously.
-- Pull-request file pagination, truncated/missing patch handling, finding persistence, and comment idempotency are incomplete.
+- GitHub Check Runs and one coherent review summary begin in Phase 3.
+- Rule precision must still be measured in an advisory pilot before any finding can block merges.
+- The durable worker currently shares the API process; separate deployment is operational hardening.
 - The frontend is still an authentication scaffold.
 
 ## Phase 0 — Stabilize the Foundation
@@ -60,41 +62,45 @@ Exit criteria:
 
 Goal: ensure every accepted delivery reaches a durable terminal state or can be retried safely.
 
-- Add persisted installations and repositories with an explicit enabled/disabled state.
-- Model webhook deliveries and review runs with states such as `RECEIVED`, `QUEUED`, `PROCESSING`, `SUCCEEDED`, and `FAILED`.
-- Return a fast success response after verification and durable enqueueing.
-- Move patch fetching, scanning, and publishing into a worker/job boundary.
-- Record attempt count, timestamps, sanitized failure category, and retry eligibility.
-- Add bounded retries with backoff for retryable GitHub API failures.
-- Create stable finding fingerprints and make comment publication idempotent.
-- Support all pull-request file pages and detect when GitHub omits or truncates patches.
-- Avoid treating a recorded-but-failed delivery as successfully processed.
+Status: implementation and local verification completed on 2026-07-12.
+
+- [x] Add persisted installations and repositories with an explicit enabled/disabled state.
+- [x] Model webhook deliveries and review runs with states such as `RECEIVED`, `QUEUED`, `PROCESSING`, `SUCCEEDED`, and `FAILED`.
+- [x] Return a fast success response after verification and durable enqueueing.
+- [x] Move patch fetching, scanning, and publishing into a worker/job boundary.
+- [x] Record attempt count, timestamps, sanitized failure category, and retry eligibility.
+- [x] Add bounded retries with backoff for retryable GitHub API failures.
+- [x] Create stable finding fingerprints and make comment publication idempotent.
+- [x] Support all pull-request file pages and detect when GitHub omits or truncates patches.
+- [x] Avoid treating a recorded-but-failed delivery as successfully processed.
 
 Exit criteria:
 
-- Replaying a delivery cannot create duplicate reviews or comments.
-- A transient GitHub failure can recover without manual database edits.
-- A review run exposes an observable final state and sanitized failure reason.
-- Large PRs produce an explicit partial-analysis status instead of silent coverage gaps.
+- [x] Replaying a delivery cannot create duplicate reviews or comments.
+- [x] A transient GitHub failure can recover without manual database edits.
+- [x] A review run exposes an observable final state and sanitized failure reason.
+- [x] Large PRs produce an explicit partial-analysis status instead of silent coverage gaps.
 
 ## Phase 2 — Deterministic Scanner Framework
 
 Goal: add security rules through a consistent, testable rule contract.
 
-- Define a rule interface with ID, version, supported languages/files, severity, confidence, evidence, remediation, and fingerprint inputs.
-- Improve secret detection with provider patterns, entropy/placeholder handling, test-fixture awareness, and safe redaction.
-- Add focused rules for unsafe SQL construction, command execution, path handling, authentication/authorization changes, CORS/security configuration, and missing external-input validation.
-- Separate repository-policy findings such as missing tests from vulnerability findings.
-- Add per-rule fixtures for true positives, false positives, and boundary cases.
-- Add repository configuration for rule enablement, severity thresholds, ignored paths, and documented suppressions.
-- Never include the suspected secret value in stored evidence, logs, or GitHub comments.
+Status: engineering implementation and local verification completed on 2026-07-12; advisory-pilot precision evidence remains pending.
+
+- [x] Define a rule interface with ID, version, supported languages/files, severity, confidence, evidence, remediation, and fingerprint inputs.
+- [x] Improve secret detection with provider patterns, entropy/placeholder handling, test-fixture awareness, and safe redaction.
+- [x] Add focused rules for unsafe SQL construction, command execution, path handling, authentication/authorization changes, CORS/security configuration, and missing external-input validation.
+- [x] Separate repository-policy findings such as missing tests from vulnerability findings.
+- [x] Add per-rule fixtures for true positives, false positives, and boundary cases.
+- [x] Add repository configuration for rule enablement, severity thresholds, ignored paths, and documented suppressions.
+- [x] Never include the suspected secret value in stored evidence, logs, or GitHub comments.
 
 Exit criteria:
 
-- Every enabled rule has positive and negative fixtures.
-- Findings state the exact evidence and remediation without claiming certainty beyond the rule's capability.
-- Suppressions are reviewable, scoped, and auditable.
-- Precision is measured during a non-blocking pilot before any rule becomes blocking.
+- [x] Every enabled rule has positive and negative fixtures.
+- [x] Findings state the exact evidence and remediation without claiming certainty beyond the rule's capability.
+- [x] Suppressions are reviewable, scoped, and auditable.
+- [ ] Precision is measured during a non-blocking pilot before any rule becomes blocking.
 
 ## Phase 3 — GitHub-Native Review Experience
 

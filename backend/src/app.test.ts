@@ -9,6 +9,7 @@ process.env.GITHUB_WEBHOOK_SECRET = "phase-zero-test-webhook-secret";
 const { createApp } = await import("./app");
 const {
   githubWebhookRouter,
+  createGithubWebhookHandler,
   handleGithubWebhook,
   handleGithubWebhookGet,
 } = await import("./routes/github-webhooks.routes");
@@ -141,7 +142,7 @@ describe("GitHub webhook route", () => {
 
     expect(output).toEqual({
       status: 400,
-      body: { error: "Missing GitHub delivery ID" },
+      body: { error: "Missing or invalid GitHub delivery ID" },
     });
   });
 
@@ -154,6 +155,112 @@ describe("GitHub webhook route", () => {
     expect(output).toEqual({
       status: 202,
       body: { message: "Pull request action ignored", action: "closed" },
+    });
+  });
+
+  it("rejects a malformed pull request action instead of treating it as ignored", async () => {
+    const output = await invokePost(JSON.stringify({ action: 42 }), {
+      "x-github-event": "pull_request",
+      "x-github-delivery": "route-test-malformed-action",
+    });
+    expect(output).toEqual({
+      status: 400,
+      body: { error: "Incomplete pull request payload" },
+    });
+  });
+
+  it("durably queues a valid delivery and returns 202 without GitHub API work", async () => {
+    let acceptedInput: unknown;
+    const handler = createGithubWebhookHandler({
+      async accept(input) {
+        acceptedInput = input;
+        return { kind: "queued", reviewRunId: "run-1", state: "QUEUED" };
+      },
+    });
+    const payload = JSON.stringify({
+      action: "opened",
+      installation: { id: 123 },
+      repository: {
+        id: 456,
+        name: "diffguard",
+        full_name: "MarcZxc1/diffguard",
+        owner: { login: "MarcZxc1" },
+      },
+      pull_request: { number: 7, head: { sha: "abcdef123456" } },
+    });
+    const request = createRequest(payload, {
+      "x-hub-signature-256": signatureFor(Buffer.from(payload)),
+      "x-github-event": "pull_request",
+      "x-github-delivery": "route-test-queued",
+    });
+    const { output, response } = createResponse();
+
+    await handler(request, response);
+
+    expect(output).toEqual({
+      status: 202,
+      body: { message: "Webhook queued", reviewRunId: "run-1", state: "QUEUED" },
+    });
+    expect(acceptedInput).toMatchObject({
+      repositoryFullName: "MarcZxc1/diffguard",
+      pullRequestNumber: 7,
+      headSha: "abcdef123456",
+    });
+  });
+
+  it("reports a durable duplicate's actual review state", async () => {
+    const handler = createGithubWebhookHandler({
+      async accept() {
+        return { kind: "duplicate", reviewRunId: "run-1", state: "FAILED" };
+      },
+    });
+    const payload = JSON.stringify({
+      action: "synchronize",
+      installation: { id: 123 },
+      repository: { id: 456, name: "repo", full_name: "owner/repo" },
+      pull_request: { number: 7, head: { sha: "abcdef123456" } },
+    });
+    const request = createRequest(payload, {
+      "x-hub-signature-256": signatureFor(Buffer.from(payload)),
+      "x-github-event": "pull_request",
+      "x-github-delivery": "route-test-duplicate",
+    });
+    const { output, response } = createResponse();
+    await handler(request, response);
+    expect(output).toEqual({
+      status: 200,
+      body: { message: "Webhook already registered", reviewRunId: "run-1", state: "FAILED" },
+    });
+  });
+
+  it("returns a retryable response when durable enqueueing fails", async () => {
+    const handler = createGithubWebhookHandler({
+      async accept() {
+        throw new Error("database unavailable");
+      },
+    });
+    const payload = JSON.stringify({
+      action: "opened",
+      installation: { id: 123 },
+      repository: { id: 456, name: "repo", full_name: "owner/repo" },
+      pull_request: { number: 7, head: { sha: "abcdef123456" } },
+    });
+    const request = createRequest(payload, {
+      "x-hub-signature-256": signatureFor(Buffer.from(payload)),
+      "x-github-event": "pull_request",
+      "x-github-delivery": "route-test-enqueue-failure",
+    });
+    const { output, response } = createResponse();
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      await handler(request, response);
+    } finally {
+      console.error = originalError;
+    }
+    expect(output).toEqual({
+      status: 503,
+      body: { error: "Unable to queue GitHub review" },
     });
   });
 });

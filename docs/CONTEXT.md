@@ -2,7 +2,7 @@
 
 ## Purpose
 
-DiffGuard is a focused GitHub pull-request security assistant. GitHub sends a signed `pull_request` webhook, the backend verifies that it really came from GitHub, then the current MVP fetches changed-file patches, applies a narrow hardcoded-secret rule, and can publish bounded inline comments. The current frontend is an authentication and backend-connectivity scaffold rather than the final DiffGuard product UI.
+DiffGuard is a focused GitHub pull-request security assistant. GitHub sends a signed `pull_request` webhook, the backend verifies and durably queues it, then a database-backed worker fetches every supported changed-file page, applies versioned deterministic rules, persists findings, and publishes at most three idempotent inline comments. The current frontend is an authentication and backend-connectivity scaffold rather than the final DiffGuard product UI.
 
 ## Stack
 
@@ -32,7 +32,8 @@ diffguard/
 
 ```text
 React browser -> /api/auth or /api/users -> Express routes -> controllers -> Prisma / Redis
-GitHub -> ngrok -> POST /api/webhook/github -> raw body -> HMAC -> App token -> patch scan -> comments
+GitHub -> ngrok -> webhook -> raw-body HMAC -> durable review run -> 202
+Review worker -> installation token -> paginated patches -> rules -> findings -> idempotent comments
 ```
 
 GitHub signs the **exact request bytes**, not a re-formatted JSON object. That is why the webhook router is mounted before `express.json()`: its `express.raw()` middleware must receive the untouched body before a JSON parser consumes it.
@@ -78,8 +79,10 @@ PORT=3000
 | POST | `/api/auth/login` | No | Verifies credentials and returns a JWT. |
 | GET | `/api/users` | Admin JWT | Returns cached user records. |
 | POST | `/api/users` | Admin JWT | Creates a user from `email`, optional `name`, and a password of at least eight characters. Passwords are hashed and omitted from responses. |
-| POST | `/api/webhook/github` | GitHub HMAC | Accepts `opened` and `synchronize` pull-request events, analyzes changed lines for hardcoded secrets, and posts up to three inline comments. |
+| POST | `/api/webhook/github` | GitHub HMAC | Atomically queues supported `opened` and `synchronize` deliveries and returns the durable review-run ID. |
 | GET | `/api/webhook/github` | No | Returns 405 because webhooks are POST-only. |
+| GET | `/api/review-runs/:id` | Admin JWT | Returns the durable state, sanitized failure, coverage counts, and persisted findings for one run. |
+| PATCH | `/api/repositories/:id/rules` | Admin JWT | Replaces a repository's validated rule configuration for future review runs. |
 
 ## Important boundaries
 
@@ -90,12 +93,49 @@ PORT=3000
 - `middlewares/` runs before or after handlers for auth and errors.
 - `prisma/schema.prisma` is the source of truth for database models.
 
+## Durable review behavior
+
+- Installation, repository, delivery, review run, finding, and publication state are persisted in PostgreSQL.
+- The webhook performs no GitHub API calls. A valid supported delivery returns `202` only after the delivery and queued run commit together.
+- The in-process worker claims queued rows atomically. A 30-second attempt heartbeat prevents normal long-running work from being reclaimed; abandoned attempts become retryable after five minutes.
+- Network, timeout, rate-limit, and GitHub 5xx failures use at most three attempts with bounded exponential backoff. Authorization, configuration, invalid-response, not-found, and stale-location failures terminate without retry.
+- Failure categories and messages are sanitized. Tokens, patches, credentials, signatures, and upstream response bodies are not persisted.
+- File pagination is bounded at 3,000 returned files. Hitting that bound, missing patches, deleted files, or truncated patches produces `PARTIAL`, never a clean result.
+- Finding fingerprints include the head revision, rule identity/version, file, and line. Inline comments carry an HMAC-authenticated hidden marker, allowing a retry to find an external comment after a database-write failure without letting contributors forge a predictable marker.
+
+## Repository rule configuration
+
+Rule configuration is captured on the review run when the webhook is queued, so a retry cannot silently change rule behavior. The admin-only repository endpoint accepts this strict shape:
+
+```json
+{
+  "enabledRuleIds": ["security.hardcoded-secret", "security.unsafe-sql-construction"],
+  "severityThreshold": "MEDIUM",
+  "ignoredPaths": ["generated/**"],
+  "suppressions": [
+    {
+      "ruleId": "security.hardcoded-secret",
+      "path": "examples/**",
+      "reason": "Documented non-production example fixture"
+    }
+  ]
+}
+```
+
+Unknown fields/rules and suppressions without a reason are rejected. Applied suppressions remain visible on persisted findings with their reason.
+
+## Migration compatibility
+
+Fresh environments should run `bun run db:migrate`. The repository now has a versioned baseline migration.
+
+Existing local databases created before Phase 1 with `prisma db push` have no Prisma migration history. Back them up, apply the additive schema with `bun run db:push`, verify it, then mark `20260712090000_phase_1_2_foundation` as applied with `prisma migrate resolve`. Do not run `migrate deploy` directly against a non-empty unbaselined database; Prisma will correctly reject it with `P3005`.
+
 ## Current known gaps
 
-- Webhook review work is synchronous, and a delivery recorded before a processing failure cannot yet be safely resumed. Durable jobs and terminal review states are Phase 1 work.
-- Pull-request file pagination, missing/truncated patch reporting, finding persistence, and comment idempotency are incomplete.
-- Only a narrow hardcoded-secret rule exists; DiffGuard must not claim broad vulnerability coverage.
-- The frontend is a starter authentication screen. It does not yet expose DiffGuard repositories, analyses, findings, or settings.
+- Review work runs in a durable database queue but still shares the API process. A separately deployed worker is an operational hardening step.
+- GitHub Check Runs and a coherent review summary begin in Phase 3; current output remains bounded inline comments plus the review-run API.
+- Deterministic rules are focused heuristics, not proof of a vulnerability. Precision still needs measurement during the advisory pilot.
+- The frontend is a starter authentication screen. It does not yet expose repositories, review runs, findings, or settings.
 
 ## Commands
 
@@ -107,6 +147,8 @@ PORT=3000
 | `cd backend && bun run build` | Produces `backend/dist`. |
 | `cd frontend && bun run build` | Type-checks and builds the client. |
 | `cd backend && bun run db:push` | Applies the Prisma schema to the configured development database. |
+| `cd backend && bun run db:migrate` | Applies versioned migrations to a migration-managed database. |
+| `cd backend && bun run db:validate` | Validates the Prisma schema without changing a database. |
 
 ## Using the local Codex skills
 
