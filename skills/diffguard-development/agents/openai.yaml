@@ -1,4 +1,4 @@
 interface:
   display_name: "DiffGuard Development"
-  short_description: "Build and verify DiffGuard features safely"
-  default_prompt: "Use $diffguard-development to implement and verify this DiffGuard change."
+  short_description: "Build reliable PR security review features"
+  default_prompt: "Use $diffguard-development to plan, implement, and verify this DiffGuard change."
