@@ -2,7 +2,7 @@
 
 ## Purpose
 
-DiffGuard is the starting point for a GitHub pull-request analysis service. GitHub sends a signed `pull_request` webhook, the backend verifies that it really came from GitHub, then future work can queue analysis and publish a review result. The current frontend is an authentication and backend-connectivity scaffold rather than the final DiffGuard product UI.
+DiffGuard is a focused GitHub pull-request security assistant. GitHub sends a signed `pull_request` webhook, the backend verifies that it really came from GitHub, then the current MVP fetches changed-file patches, applies a narrow hardcoded-secret rule, and can publish bounded inline comments. The current frontend is an authentication and backend-connectivity scaffold rather than the final DiffGuard product UI.
 
 ## Stack
 
@@ -32,7 +32,7 @@ diffguard/
 
 ```text
 React browser -> /api/auth or /api/users -> Express routes -> controllers -> Prisma / Redis
-GitHub -> ngrok -> POST /api/webhook/github -> raw body -> HMAC check -> future analysis
+GitHub -> ngrok -> POST /api/webhook/github -> raw body -> HMAC -> App token -> patch scan -> comments
 ```
 
 GitHub signs the **exact request bytes**, not a re-formatted JSON object. That is why the webhook router is mounted before `express.json()`: its `express.raw()` middleware must receive the untouched body before a JSON parser consumes it.
@@ -62,6 +62,8 @@ DATABASE_URL=postgresql://...
 REDIS_URL=redis://localhost:63707
 JWT_SECRET=replace-with-a-long-random-secret
 GITHUB_WEBHOOK_SECRET=replace-with-the-GitHub-webhook-secret
+GITHUB_APP_ID=123456
+GITHUB_APP_PRIVATE_KEY_PATH=/absolute/path/to/github-app.private-key.pem
 PORT=3000
 ```
 
@@ -75,8 +77,8 @@ PORT=3000
 | POST | `/api/auth/register` | No | Creates a user and returns a 15-minute JWT. |
 | POST | `/api/auth/login` | No | Verifies credentials and returns a JWT. |
 | GET | `/api/users` | Admin JWT | Returns cached user records. |
-| POST | `/api/users` | Admin JWT | Intended to create a user; see known issue below. |
-| POST | `/api/webhook/github` | GitHub HMAC | Accepts `opened` and `synchronize` pull-request events and records delivery IDs to prevent duplicate processing. |
+| POST | `/api/users` | Admin JWT | Creates a user from `email`, optional `name`, and a password of at least eight characters. Passwords are hashed and omitted from responses. |
+| POST | `/api/webhook/github` | GitHub HMAC | Accepts `opened` and `synchronize` pull-request events, analyzes changed lines for hardcoded secrets, and posts up to three inline comments. |
 | GET | `/api/webhook/github` | No | Returns 405 because webhooks are POST-only. |
 
 ## Important boundaries
@@ -90,10 +92,10 @@ PORT=3000
 
 ## Current known gaps
 
-- `bun run typecheck` fails in `backend/src/services/user.service.ts`: the Prisma `User` model requires `password`, but the admin create-user DTO only supplies `email` and optional `name`. Decide whether admins should supply a password, generate an invitation/reset flow, or remove this endpoint before fixing the contract.
-- The webhook records accepted delivery IDs and logs an accepted PR, but does not yet fetch a diff, enqueue a job, or post a GitHub check/review.
+- Webhook review work is synchronous, and a delivery recorded before a processing failure cannot yet be safely resumed. Durable jobs and terminal review states are Phase 1 work.
+- Pull-request file pagination, missing/truncated patch reporting, finding persistence, and comment idempotency are incomplete.
+- Only a narrow hardcoded-secret rule exists; DiffGuard must not claim broad vulnerability coverage.
 - The frontend is a starter authentication screen. It does not yet expose DiffGuard repositories, analyses, findings, or settings.
-- Redis starts during module import. Add connection error handling and a shutdown path before production deployment.
 
 ## Commands
 

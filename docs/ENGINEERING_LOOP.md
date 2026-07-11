@@ -51,4 +51,4 @@ For a GitHub integration: raw-body signature test -> delivery id -> idempotency 
 
 ## Current baseline
 
-`cd backend && bun test` passes. `cd backend && bun run typecheck` currently fails because the admin user-create API does not supply the Prisma-required `password`. Treat this as existing technical debt; do not report it as a regression unless your change touches that contract.
+Phase 0 requires backend tests, backend typecheck/build, and the frontend build to pass together. The GitHub Actions workflow runs the same checks for every pull request and push to `main`.

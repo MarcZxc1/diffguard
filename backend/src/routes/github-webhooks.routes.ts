@@ -1,24 +1,30 @@
-import express, { Router } from "express";
+import express, { Router, type Request, type Response } from "express";
 import { env } from "../env";
+import {
+  createGithubInstallationToken,
+  GithubAppError,
+  readGithubAppPrivateKey,
+} from "../lib/github-app";
+import { parseUnifiedDiff } from "../lib/diff-parser";
 import { verifyGithubWebhookSignature } from "../lib/github-webhook";
+import {
+  fetchGithubPullRequestFiles,
+  formatRuleFindingComment,
+  postGithubReviewComment,
+} from "../lib/github-review";
 import { githubWebhookDeliveryService } from "../services/github-webhook-delivery.service";
+import { scanChangedLines } from "../services/rule-engine";
 
 export const githubWebhookRouter = Router();
 
 // A browser check uses GET, but GitHub deliveries are POST-only.
-githubWebhookRouter.get("/github", (_req, res) => {
+export function handleGithubWebhookGet(_req: Request, res: Response) {
   res.status(405).json({
     error: "GitHub webhook endpoint only accepts POST requests",
   });
-});
+}
 
-githubWebhookRouter.post(
-  "/github",
-  express.raw({
-    type: "application/json",
-    limit: "1mb",
-  }),
-  async (req, res) => {
+export async function handleGithubWebhook(req: Request, res: Response) {
     const signature = req.header("x-hub-signature-256");
     const event = req.header("x-github-event");
     const deliveryId = req.header("x-github-delivery");
@@ -72,6 +78,9 @@ githubWebhookRouter.post(
         number?: number;
         title?: string;
         html_url?: string;
+        head?: {
+          sha?: string;
+        };
       };
       repository?: {
         full_name?: string;
@@ -90,14 +99,103 @@ githubWebhookRouter.post(
       });
     }
 
-    const registration = await githubWebhookDeliveryService.register({
-      deliveryId,
-      eventType: event,
-    });
+    const installationId = prPayload.installation?.id;
 
-    if (registration.isDuplicate) {
-      return res.status(200).json({
-        message: "Webhook already processed",
+    if (
+      typeof installationId !== "number" ||
+      !Number.isInteger(installationId) ||
+      installationId <= 0
+    ) {
+      return res.status(400).json({
+        error: "Missing or invalid GitHub installation ID",
+      });
+    }
+
+    if (!env.GITHUB_APP_ID) {
+      return res.status(503).json({
+        error: "GitHub App credentials are not configured",
+      });
+    }
+
+    let findingsPosted = 0;
+
+    try {
+      const privateKey = readGithubAppPrivateKey({
+        privateKey: env.GITHUB_APP_PRIVATE_KEY,
+        privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH,
+      });
+
+      const installationToken = await createGithubInstallationToken({
+        installationId,
+        appId: env.GITHUB_APP_ID,
+        privateKey,
+      });
+
+      const repository = prPayload.repository?.full_name;
+      const pullRequestNumber = prPayload.pull_request?.number;
+      const commitId = prPayload.pull_request?.head?.sha;
+
+      if (
+        !repository ||
+        typeof pullRequestNumber !== "number" ||
+        !Number.isInteger(pullRequestNumber) ||
+        !commitId
+      ) {
+        return res.status(400).json({
+          error: "Incomplete pull request payload",
+        });
+      }
+
+      const registration = await githubWebhookDeliveryService.register({
+        deliveryId,
+        eventType: event,
+      });
+
+      if (registration.isDuplicate) {
+        return res.status(200).json({
+          message: "Webhook already processed",
+        });
+      }
+
+      const files = await fetchGithubPullRequestFiles({
+        repository,
+        pullRequestNumber,
+        token: installationToken.token,
+      });
+      const changedLines = files.flatMap((file) =>
+        file.patch ? parseUnifiedDiff(file.filename, file.patch) : [],
+      );
+      const findings = scanChangedLines(changedLines).slice(0, 3);
+
+      for (const finding of findings) {
+        await postGithubReviewComment({
+          repository,
+          pullRequestNumber,
+          token: installationToken.token,
+          commitId,
+          filePath: finding.filePath,
+          lineNumber: finding.lineNumber,
+          body: formatRuleFindingComment(finding),
+        });
+        findingsPosted += 1;
+      }
+
+      console.log("DiffGuard PR review completed:", {
+        deliveryId,
+        repository,
+        pullRequestNumber,
+        changedLineCount: changedLines.length,
+        findingCount: findings.length,
+      });
+    } catch (error) {
+      if (error instanceof GithubAppError) {
+        console.error("GitHub review processing failed:", error.message);
+      } else {
+        console.error("GitHub review processing failed.");
+      }
+
+      return res.status(502).json({
+        error: "Unable to process the GitHub review",
       });
     }
 
@@ -112,6 +210,17 @@ githubWebhookRouter.post(
 
     return res.status(200).json({
       message: "Webhook received",
+      findingsPosted,
     });
-  },
+}
+
+githubWebhookRouter.get("/github", handleGithubWebhookGet);
+
+githubWebhookRouter.post(
+  "/github",
+  express.raw({
+    type: "application/json",
+    limit: "1mb",
+  }),
+  handleGithubWebhook,
 );

@@ -6,7 +6,8 @@ import { userService } from "../services/user.service";
 const createUserSchema = z.object({
   email: z.string().email(),
   name: z.string().trim().min(1).optional(),
-});
+  password: z.string().min(8, "Password must be at least 8 characters"),
+}).strict();
 
 export async function listUsers(_req: Request, res: Response) {
   const users = await userService.list();
