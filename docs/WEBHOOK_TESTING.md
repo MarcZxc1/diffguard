@@ -82,22 +82,33 @@ fish scripts/test-github-webhook.fish
 
 The script creates a new delivery ID, signs the exact sample payload bytes, and posts them to `http://localhost:3000/api/webhook/github`. Set `WEBHOOK_URL` when testing through ngrok, or `DELIVERY_ID` when you deliberately want to send the same delivery twice.
 
-## Verify retry handling
+## Verify durable queue and retry handling
 
-Send the exact same signed request a second time with the same `x-github-delivery` value. The first request returns `200 Webhook received`; the retry returns `200 Webhook already processed`. Use a new delivery ID when starting another manual test.
+Send the exact same signed request a second time with the same `x-github-delivery` value. The first request returns `202 Webhook queued` with a `reviewRunId`. The retry returns `200 Webhook already registered` with that same ID and its actual current state. A failed run is never described as successfully processed.
+
+Use an admin JWT to inspect the durable result:
+
+```fish
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:3000/api/review-runs/<review-run-id>"
+```
+
+The response exposes `QUEUED`, `PROCESSING`, `SUCCEEDED`, `PARTIAL`, or `FAILED`, attempt counts, sanitized failure category/message, analyzed/skipped file counts, and findings. It never returns installation tokens, full patches, or suspected credential values.
+
+Retryable network, timeout, rate-limit, and GitHub 5xx failures automatically return to `QUEUED` with bounded backoff until three attempts are exhausted. Replaying a delivery for a retryable recorded failure can requeue it without deleting database rows. Comment retries search GitHub for the finding's HMAC-authenticated hidden marker before posting.
 
 ## Response guide
 
 | Response | Meaning | What to check |
 | --- | --- | --- |
-| `200 Webhook received` | Signature, installation auth, patch fetch, and review processing succeeded. | Backend logs should show the review summary and GitHub should show any findings as inline comments. |
-| `200 Webhook already processed` | GitHub retried an accepted delivery ID. | The retry was acknowledged without starting duplicate review work. |
-| `502 Unable to process the GitHub review` | App authentication, patch fetching, or comment posting failed. | Check App permissions and server logs; never print the private key or token. |
-| `503 GitHub App credentials are not configured` | The webhook server has no App ID configuration. | Set `GITHUB_APP_ID` and either `GITHUB_APP_PRIVATE_KEY` or `GITHUB_APP_PRIVATE_KEY_PATH` in `backend/.env`. |
+| `202 Webhook queued` | The supported delivery and review run committed atomically. | Use the returned `reviewRunId`; GitHub API work happens in the worker. |
+| `200 Webhook already registered` | GitHub retried an existing delivery ID. | Inspect the returned real run state; no second run is created. |
+| `202 Repository is disabled` | The installation or repository is persisted but disabled. | Enable it intentionally before expecting review work. |
+| `503 Unable to queue GitHub review` | Durable persistence failed, so no success acknowledgement was sent. | GitHub may retry; check PostgreSQL health without deleting delivery state. |
 | `202 Event ignored` | Signature was valid but the event is not `pull_request`. | Set `x-github-event: pull_request`. |
 | `202 Pull request action ignored` | Signature was valid but action is not `opened` or `synchronize`. | Check body `action`. |
 | `400 Expected raw request body` | JSON content type or parser ordering is wrong. | Send `content-type: application/json`; keep router above `express.json()`. |
-| `400 Missing or invalid GitHub installation ID` | The signed payload does not identify an installed GitHub App. | Use a real App webhook payload with a positive `installation.id`. |
+| `400 Incomplete pull request payload` | Installation, repository, PR, or head revision identity is invalid. | Use the unmodified GitHub App payload and supported action. |
 | `401 Invalid GitHub webhook signature` | HMAC does not match the raw body. | Recreate the signature, use the same secret, retain `sha256=`, and send unchanged body bytes. |
 | `404` | ngrok forwards to a different server/path or the route was not mounted. | Confirm `ngrok http 3000` and the POST URL. |
 | `405` | A GET request reached the endpoint. | Use POST; this is normal in a browser. |

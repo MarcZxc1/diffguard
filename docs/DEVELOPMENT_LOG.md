@@ -2,6 +2,44 @@
 
 ## 2026-07-12
 
+### Phase 1 reliable review processing
+
+- Added versioned persistence for GitHub installations/repositories, delivery and review-run lifecycle, attempts, sanitized failures, coverage metrics, findings, suppressions, and comment publication.
+- Changed the webhook contract from synchronous GitHub work to atomic durable enqueue followed by `202`.
+- Added an attempt-scoped database worker with atomic claims, heartbeats, abandoned-run recovery, three bounded attempts, and sanitized terminal states.
+- Added paginated pull-request file fetching, request timeouts, missing/deleted/truncated patch detection, and explicit `PARTIAL` completion.
+- Added revision-stable finding fingerprints and hidden GitHub comment markers so retries can recover an externally posted comment after a database-write failure.
+- Added an admin-only review-run endpoint for observable state and sanitized findings.
+
+### Phase 2 deterministic scanner framework
+
+- Added a versioned rule contract with category, supported files, severity, confidence, redacted evidence, explanation, remediation, and fingerprint inputs.
+- Added focused hardcoded-secret, unsafe-SQL, dynamic-command, untrusted-path, explicit-auth-bypass, permissive-CORS, and unvalidated-request-write rules.
+- Added a separate missing-tests repository-policy rule.
+- Added strict repository configuration for enabled rules, severity threshold, ignored paths, and reasoned scoped suppressions; each run snapshots the configuration it was queued with.
+- Added admin-only repository rule configuration and positive, negative, removed-line boundary, redaction, suppression, policy, and fingerprint fixtures.
+
+### Phase 1–2 migration verification
+
+- Prisma schema validation passed.
+- Applied the versioned migration to an isolated clean PostgreSQL database.
+- Prisma migration diff reported no difference from `schema.prisma`.
+- Removed the temporary validation database without modifying the existing pre-migration development database.
+
+### Phase 1–2 verification and review
+
+- `cd backend && bun test`: 62 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd backend && bun run db:validate`: passing.
+- `cd frontend && bun run build`: passing.
+- A real isolated-database smoke test queued one delivery and verified its replay returned the same review-run ID and state.
+- Senior review fixed forgeable plain comment markers, repository-name reuse conflicts, stale-worker heartbeat races, ineffective rate-limit delays, unsupported-file scanning, malformed upstream JSON handling, and a lingering startup error listener.
+
+### Remaining exit evidence
+
+- Phase 2 precision must be measured during a non-blocking advisory pilot before any rule becomes blocking.
+
 ### Phase 0 foundation stabilization
 
 - Made the admin create-user contract require a password of at least eight characters, hash it with Argon2, and exclude password hashes from user list/create responses.

@@ -1,226 +1,131 @@
 import express, { Router, type Request, type Response } from "express";
+import { z } from "zod";
 import { env } from "../env";
-import {
-  createGithubInstallationToken,
-  GithubAppError,
-  readGithubAppPrivateKey,
-} from "../lib/github-app";
-import { parseUnifiedDiff } from "../lib/diff-parser";
 import { verifyGithubWebhookSignature } from "../lib/github-webhook";
 import {
-  fetchGithubPullRequestFiles,
-  formatRuleFindingComment,
-  postGithubReviewComment,
-} from "../lib/github-review";
-import { githubWebhookDeliveryService } from "../services/github-webhook-delivery.service";
-import { scanChangedLines } from "../services/rule-engine";
+  githubWebhookDeliveryService,
+  type DeliveryAcceptance,
+  type PullRequestDeliveryInput,
+} from "../services/github-webhook-delivery.service";
+
+const actionSchema = z.object({ action: z.string().optional() });
+const pullRequestPayloadSchema = z.object({
+  action: z.enum(["opened", "synchronize"]),
+  installation: z.object({ id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
+  repository: z.object({
+    id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    name: z.string().min(1),
+    full_name: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+    owner: z.object({ login: z.string().min(1) }).optional(),
+  }),
+  pull_request: z.object({
+    number: z.number().int().positive(),
+    head: z.object({ sha: z.string().min(7).max(100) }),
+  }),
+});
+
+type WebhookHandlerDependencies = {
+  accept(input: PullRequestDeliveryInput): Promise<DeliveryAcceptance>;
+};
 
 export const githubWebhookRouter = Router();
 
-// A browser check uses GET, but GitHub deliveries are POST-only.
 export function handleGithubWebhookGet(_req: Request, res: Response) {
   res.status(405).json({
     error: "GitHub webhook endpoint only accepts POST requests",
   });
 }
 
-export async function handleGithubWebhook(req: Request, res: Response) {
+export function createGithubWebhookHandler(
+  dependencies: WebhookHandlerDependencies = githubWebhookDeliveryService,
+) {
+  return async function handleGithubWebhook(req: Request, res: Response) {
     const signature = req.header("x-hub-signature-256");
     const event = req.header("x-github-event");
     const deliveryId = req.header("x-github-delivery");
 
-    // The HMAC must use untouched bytes, not JSON.stringify(parsedPayload).
     if (!Buffer.isBuffer(req.body)) {
-      return res.status(400).json({
-        error: "Expected raw request body",
-      });
+      return res.status(400).json({ error: "Expected raw request body" });
     }
-
-    const isValid = verifyGithubWebhookSignature({
+    if (!verifyGithubWebhookSignature({
       rawBody: req.body,
       signatureHeader: signature,
       secret: env.GITHUB_WEBHOOK_SECRET,
-    });
-
-    if (!isValid) {
-      return res.status(401).json({
-        error: "Invalid GitHub webhook signature",
-      });
+    })) {
+      return res.status(401).json({ error: "Invalid GitHub webhook signature" });
     }
 
-    // Verify the sender before parsing or inspecting untrusted JSON.
     let payload: unknown;
-
     try {
       payload = JSON.parse(req.body.toString("utf8"));
     } catch {
-      return res.status(400).json({
-        error: "Invalid JSON payload",
-      });
+      return res.status(400).json({ error: "Invalid JSON payload" });
     }
 
-    if (!deliveryId) {
-      return res.status(400).json({
-        error: "Missing GitHub delivery ID",
-      });
+    if (!deliveryId || deliveryId.length > 200) {
+      return res.status(400).json({ error: "Missing or invalid GitHub delivery ID" });
     }
-
     if (event !== "pull_request") {
-      return res.status(202).json({
-        message: "Event ignored",
-        event,
-      });
+      return res.status(202).json({ message: "Event ignored", event });
     }
 
-    const prPayload = payload as {
-      action?: string;
-      pull_request?: {
-        number?: number;
-        title?: string;
-        html_url?: string;
-        head?: {
-          sha?: string;
-        };
-      };
-      repository?: {
-        full_name?: string;
-      };
-      installation?: {
-        id?: number;
-      };
-    };
-
-    const allowedActions = ["opened", "synchronize"];
-
-    if (!prPayload.action || !allowedActions.includes(prPayload.action)) {
+    const action = actionSchema.safeParse(payload);
+    if (!action.success) {
+      return res.status(400).json({ error: "Incomplete pull request payload" });
+    }
+    if (!["opened", "synchronize"].includes(action.data.action ?? "")) {
       return res.status(202).json({
         message: "Pull request action ignored",
-        action: prPayload.action,
+        action: action.data.action,
       });
     }
-
-    const installationId = prPayload.installation?.id;
-
-    if (
-      typeof installationId !== "number" ||
-      !Number.isInteger(installationId) ||
-      installationId <= 0
-    ) {
-      return res.status(400).json({
-        error: "Missing or invalid GitHub installation ID",
-      });
+    const parsed = pullRequestPayloadSchema.safeParse(payload);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Incomplete pull request payload" });
     }
 
-    if (!env.GITHUB_APP_ID) {
-      return res.status(503).json({
-        error: "GitHub App credentials are not configured",
-      });
-    }
-
-    let findingsPosted = 0;
-
+    const [repositoryOwner, repositoryName] = parsed.data.repository.full_name.split("/") as [string, string];
     try {
-      const privateKey = readGithubAppPrivateKey({
-        privateKey: env.GITHUB_APP_PRIVATE_KEY,
-        privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH,
-      });
-
-      const installationToken = await createGithubInstallationToken({
-        installationId,
-        appId: env.GITHUB_APP_ID,
-        privateKey,
-      });
-
-      const repository = prPayload.repository?.full_name;
-      const pullRequestNumber = prPayload.pull_request?.number;
-      const commitId = prPayload.pull_request?.head?.sha;
-
-      if (
-        !repository ||
-        typeof pullRequestNumber !== "number" ||
-        !Number.isInteger(pullRequestNumber) ||
-        !commitId
-      ) {
-        return res.status(400).json({
-          error: "Incomplete pull request payload",
-        });
-      }
-
-      const registration = await githubWebhookDeliveryService.register({
+      const acceptance = await dependencies.accept({
         deliveryId,
-        eventType: event,
+        eventType: "pull_request",
+        installationId: parsed.data.installation.id,
+        accountLogin: parsed.data.repository.owner?.login,
+        repositoryId: parsed.data.repository.id,
+        repositoryOwner,
+        repositoryName,
+        repositoryFullName: parsed.data.repository.full_name,
+        pullRequestNumber: parsed.data.pull_request.number,
+        headSha: parsed.data.pull_request.head.sha,
       });
 
-      if (registration.isDuplicate) {
+      if (acceptance.kind === "disabled") {
+        return res.status(202).json({ message: "Repository is disabled" });
+      }
+      if (acceptance.kind === "duplicate") {
         return res.status(200).json({
-          message: "Webhook already processed",
+          message: "Webhook already registered",
+          reviewRunId: acceptance.reviewRunId,
+          state: acceptance.state,
         });
       }
-
-      const files = await fetchGithubPullRequestFiles({
-        repository,
-        pullRequestNumber,
-        token: installationToken.token,
+      return res.status(202).json({
+        message: acceptance.kind === "requeued" ? "Webhook requeued" : "Webhook queued",
+        reviewRunId: acceptance.reviewRunId,
+        state: acceptance.state,
       });
-      const changedLines = files.flatMap((file) =>
-        file.patch ? parseUnifiedDiff(file.filename, file.patch) : [],
-      );
-      const findings = scanChangedLines(changedLines).slice(0, 3);
-
-      for (const finding of findings) {
-        await postGithubReviewComment({
-          repository,
-          pullRequestNumber,
-          token: installationToken.token,
-          commitId,
-          filePath: finding.filePath,
-          lineNumber: finding.lineNumber,
-          body: formatRuleFindingComment(finding),
-        });
-        findingsPosted += 1;
-      }
-
-      console.log("DiffGuard PR review completed:", {
-        deliveryId,
-        repository,
-        pullRequestNumber,
-        changedLineCount: changedLines.length,
-        findingCount: findings.length,
-      });
-    } catch (error) {
-      if (error instanceof GithubAppError) {
-        console.error("GitHub review processing failed:", error.message);
-      } else {
-        console.error("GitHub review processing failed.");
-      }
-
-      return res.status(502).json({
-        error: "Unable to process the GitHub review",
-      });
+    } catch {
+      console.error("GitHub webhook could not be durably queued.");
+      return res.status(503).json({ error: "Unable to queue GitHub review" });
     }
-
-    console.log("GitHub PR webhook received:", {
-      deliveryId,
-      action: prPayload.action,
-      repo: prPayload.repository?.full_name,
-      prNumber: prPayload.pull_request?.number,
-      prTitle: prPayload.pull_request?.title,
-      installationId: prPayload.installation?.id,
-    });
-
-    return res.status(200).json({
-      message: "Webhook received",
-      findingsPosted,
-    });
+  };
 }
 
-githubWebhookRouter.get("/github", handleGithubWebhookGet);
+export const handleGithubWebhook = createGithubWebhookHandler();
 
+githubWebhookRouter.get("/github", handleGithubWebhookGet);
 githubWebhookRouter.post(
   "/github",
-  express.raw({
-    type: "application/json",
-    limit: "1mb",
-  }),
+  express.raw({ type: "application/json", limit: "1mb" }),
   handleGithubWebhook,
 );

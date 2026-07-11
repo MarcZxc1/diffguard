@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
     "db:generate": "bunx --bun prisma generate",
+    "db:validate": "bunx --bun prisma validate",
+    "db:migrate": "bunx --bun prisma migrate deploy",
     "db:push": "bun run db:wait && bunx --bun prisma db push",
     "db:studio": "bunx --bun prisma studio",
     "db:wait": "bun src/lib/wait-for-postgres.ts"

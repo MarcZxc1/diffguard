@@ -4,6 +4,7 @@ import {
   connectInfrastructure,
   disconnectInfrastructure,
 } from "./lib/infrastructure";
+import { startReviewWorker } from "./services/review-worker";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -12,15 +13,18 @@ export async function startServer(): Promise<Server> {
   const app = createApp();
 
   return await new Promise((resolve, reject) => {
+    const handleStartupError = async (error: Error) => {
+      await disconnectInfrastructure().catch(() => undefined);
+      reject(error);
+    };
     const server = app.listen(port, () => {
+      // Startup errors belong to this promise; later server errors must not tear down clients silently.
+      server.off("error", handleStartupError);
       console.log(`Server listening on http://localhost:${port}`);
       resolve(server);
     });
 
-    server.once("error", async (error) => {
-      await disconnectInfrastructure().catch(() => undefined);
-      reject(error);
-    });
+    server.once("error", handleStartupError);
   });
 }
 
@@ -52,6 +56,7 @@ export async function stopServer(server: Server) {
 if (import.meta.main) {
   try {
     const server = await startServer();
+    const reviewWorker = startReviewWorker();
     let isShuttingDown = false;
 
     const shutdown = async (signal: NodeJS.Signals) => {
@@ -60,6 +65,7 @@ if (import.meta.main) {
       console.log(`Received ${signal}; shutting down.`);
 
       try {
+        await reviewWorker.stop();
         await stopServer(server);
       } catch (error) {
         console.error("Server shutdown did not complete cleanly.");

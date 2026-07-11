@@ -12,6 +12,54 @@ enum Role {
   MANAGER
 }
 
+enum DeliveryState {
+  RECEIVED
+  QUEUED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum ReviewRunState {
+  QUEUED
+  PROCESSING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+}
+
+enum FailureCategory {
+  CONFIGURATION
+  AUTHORIZATION
+  RATE_LIMIT
+  NOT_FOUND
+  INVALID_RESPONSE
+  VALIDATION
+  STALE_COMMIT
+  UPSTREAM
+  TRANSIENT
+  INTERNAL
+}
+
+enum FindingCategory {
+  SECURITY
+  POLICY
+}
+
+enum FindingSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum PublicationState {
+  PENDING
+  POSTED
+  SKIPPED
+}
+
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
@@ -23,8 +71,99 @@ model User {
 }
 
 model GithubWebhookDelivery {
-  id         String   @id @default(uuid())
-  deliveryId String   @unique
-  eventType  String
-  receivedAt DateTime @default(now())
+  id              String           @id @default(uuid())
+  deliveryId      String           @unique
+  eventType       String
+  state           DeliveryState    @default(RECEIVED)
+  failureCategory FailureCategory?
+  receivedAt      DateTime         @default(now())
+  completedAt     DateTime?
+  reviewRun       ReviewRun?
+
+  @@index([state, receivedAt])
+}
+
+model GithubInstallation {
+  id                   String             @id @default(uuid())
+  githubInstallationId BigInt             @unique
+  accountLogin         String?
+  enabled              Boolean            @default(true)
+  repositories         GithubRepository[]
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+model GithubRepository {
+  id                 String             @id @default(uuid())
+  githubRepositoryId BigInt             @unique
+  installationId     String
+  installation       GithubInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  owner              String
+  name               String
+  fullName           String
+  enabled            Boolean            @default(true)
+  ruleConfiguration  Json               @default("{}")
+  reviewRuns         ReviewRun[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([installationId, enabled])
+  @@index([fullName])
+}
+
+model ReviewRun {
+  id                     String                @id @default(uuid())
+  deliveryId             String                @unique
+  delivery               GithubWebhookDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  repositoryId           String
+  repository             GithubRepository      @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  pullRequestNumber      Int
+  headSha                String
+  ruleConfiguration      Json                  @default("{}")
+  state                  ReviewRunState        @default(QUEUED)
+  attemptCount           Int                   @default(0)
+  maxAttempts            Int                   @default(3)
+  nextAttemptAt          DateTime              @default(now())
+  retryable              Boolean               @default(true)
+  failureCategory        FailureCategory?
+  failureMessage         String?
+  startedAt              DateTime?
+  completedAt            DateTime?
+  analyzedFileCount      Int                   @default(0)
+  skippedFileCount       Int                   @default(0)
+  findingCount           Int                   @default(0)
+  suppressedFindingCount Int                   @default(0)
+  findings               Finding[]
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+
+  @@index([state, nextAttemptAt])
+  @@index([repositoryId, pullRequestNumber, createdAt])
+}
+
+model Finding {
+  id                String           @id @default(uuid())
+  reviewRunId       String
+  reviewRun         ReviewRun        @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  fingerprint       String
+  ruleId            String
+  ruleVersion       String
+  category          FindingCategory
+  severity          FindingSeverity
+  confidence        Float
+  filePath          String
+  lineNumber        Int
+  title             String
+  evidence          String
+  explanation       String
+  remediation       String
+  suppressed        Boolean          @default(false)
+  suppressionReason String?
+  publicationState  PublicationState @default(PENDING)
+  githubCommentId   BigInt?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([reviewRunId, fingerprint])
+  @@index([reviewRunId, suppressed, severity])
 }
