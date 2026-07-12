@@ -29,7 +29,7 @@ function consumeRateLimit(userId: string) {
   return true;
 }
 
-function sanitizeScalar(value: unknown) {
+export function sanitizeScalar(value: unknown) {
   return String(value ?? "")
     .replace(/[\0-\x08\x0b\x0c\x0e-\x1f]/g, " ")
     .replace(/\r\n?/g, "\n")

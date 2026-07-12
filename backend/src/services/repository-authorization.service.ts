@@ -43,8 +43,8 @@ export async function recordAuditLog(params: {
   repositoryId?: string;
   action: string;
   metadata?: unknown;
-}) {
-  await prisma.auditLog.create({
+}, database = prisma) {
+  await database.auditLog.create({
     data: {
       userId: params.user?.id,
       repositoryId: params.repositoryId,

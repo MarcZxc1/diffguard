@@ -109,6 +109,7 @@ export async function verifyFindingController(req: AuthRequest, res: Response) {
   await requireRepositoryManager(req, params.data.id);
   const { verifyFinding } = await import("../services/pilot.service");
   const result = await verifyFinding.execute(
+    params.data.id,
     params.data.findingId,
     req.body,
     req.user!,

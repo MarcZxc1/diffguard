@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import type { prisma as prismaClient } from "../lib/prisma";
 import type { AuthenticatedUser } from "./repository-authorization.service";
 import { recordAuditLog } from "./repository-authorization.service";
 
@@ -15,10 +16,19 @@ export const verifyFinding = {
     return parsed.data;
   },
 
-  async execute(findingId: string, input: unknown, user: AuthenticatedUser) {
+  async execute(
+    repositoryId: string,
+    findingId: string,
+    input: unknown,
+    user: AuthenticatedUser,
+    database: typeof prismaClient = prisma,
+  ) {
     const data = this.parseInput(input);
-    const finding = await prisma.finding.findUnique({
-      where: { id: findingId },
+    const finding = await database.finding.findFirst({
+      where: {
+        id: findingId,
+        reviewRun: { repositoryId },
+      },
       select: {
         id: true,
         reviewRunId: true,
@@ -27,7 +37,7 @@ export const verifyFinding = {
     });
     if (!finding) return null;
 
-    const updated = await prisma.finding.update({
+    const updated = await database.finding.update({
       where: { id: findingId },
       data: {
         pilotVerification: data.verification,
@@ -42,7 +52,7 @@ export const verifyFinding = {
       repositoryId: finding.reviewRun.repositoryId,
       action: `finding.pilot.${data.verification.toLowerCase()}`,
       metadata: { findingId, verification: data.verification },
-    });
+    }, database);
 
     return updated;
   },
