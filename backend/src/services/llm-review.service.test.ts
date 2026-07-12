@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-process.env.OPENAI_API_KEY ??= "test-openai-key";
 const {
   runStructuredLlmReview,
   testOpenAiReviewConfiguration,
 } = await import("./llm-review.service");
+
+const testOpenAiApiKey = "test-openai-key";
 
 describe("runStructuredLlmReview", () => {
   it("skips without calling OpenAI when the repository has not opted in", async () => {
@@ -34,6 +35,7 @@ describe("runStructuredLlmReview", () => {
         changeType: "added",
       }],
       deterministicFindings: [],
+      apiKey: testOpenAiApiKey,
       fetchImpl: (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch,
     });
     expect(result.state).toBe("FAILED");
@@ -44,6 +46,7 @@ describe("runStructuredLlmReview", () => {
   it("maps OpenAI quota failures for the health check", async () => {
     const result = await testOpenAiReviewConfiguration({
       model: "gpt-test",
+      apiKey: testOpenAiApiKey,
       fetchImpl: (async () => new Response("{}", { status: 429 })) as unknown as typeof fetch,
     });
     expect(result).toEqual({
@@ -57,6 +60,7 @@ describe("runStructuredLlmReview", () => {
   it("returns ok when the health check receives valid structured output", async () => {
     const result = await testOpenAiReviewConfiguration({
       model: "gpt-test",
+      apiKey: testOpenAiApiKey,
       fetchImpl: (async () => new Response(JSON.stringify({
         output: [{
           type: "message",

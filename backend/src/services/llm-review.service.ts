@@ -246,9 +246,11 @@ const healthJsonSchema = {
 export async function testOpenAiReviewConfiguration(params: {
   model?: string | null;
   fetchImpl?: typeof fetch;
+  apiKey?: string;
 }): Promise<OpenAiHealthResult> {
   const model = params.model || env.OPENAI_MODEL;
-  if (!env.OPENAI_API_KEY) {
+  const apiKey = params.apiKey ?? env.OPENAI_API_KEY;
+  if (!apiKey) {
     return {
       ok: false,
       status: "MISSING_API_KEY",
@@ -263,7 +265,7 @@ export async function testOpenAiReviewConfiguration(params: {
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",
       },
       body: structuredOutputRequestBody({
@@ -336,11 +338,13 @@ export async function runStructuredLlmReview(params: {
   changedLines: ChangedLine[];
   deterministicFindings: RuleFinding[];
   fetchImpl?: typeof fetch;
+  apiKey?: string;
 }): Promise<LlmReviewResult> {
   if (!params.enabled) {
     return { state: "SKIPPED", findings: [] };
   }
-  if (!env.OPENAI_API_KEY) {
+  const apiKey = params.apiKey ?? env.OPENAI_API_KEY;
+  if (!apiKey) {
     return {
       state: "FAILED",
       findings: [],
@@ -363,7 +367,7 @@ export async function runStructuredLlmReview(params: {
       method: "POST",
       signal: AbortSignal.timeout(20_000),
       headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",
       },
       body: structuredOutputRequestBody({
