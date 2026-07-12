@@ -17,6 +17,7 @@ enum DeliveryState {
   QUEUED
   PROCESSING
   SUCCEEDED
+  SKIPPED
   FAILED
 }
 
@@ -25,6 +26,7 @@ enum ReviewRunState {
   PROCESSING
   SUCCEEDED
   PARTIAL
+  SKIPPED
   FAILED
 }
 
@@ -61,13 +63,16 @@ enum PublicationState {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String?
-  role      Role     @default(USER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                 String                     @id @default(uuid())
+  email              String                     @unique
+  password           String
+  name               String?
+  role               Role                       @default(USER)
+  repositoryAccesses GithubRepositoryAccess[]
+  auditLogs          AuditLog[]
+  evidenceExports    PullRequestEvidenceExport[]
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
 }
 
 model GithubWebhookDelivery {
@@ -94,18 +99,26 @@ model GithubInstallation {
 }
 
 model GithubRepository {
-  id                 String             @id @default(uuid())
-  githubRepositoryId BigInt             @unique
-  installationId     String
-  installation       GithubInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade)
-  owner              String
-  name               String
-  fullName           String
-  enabled            Boolean            @default(true)
-  ruleConfiguration  Json               @default("{}")
-  reviewRuns         ReviewRun[]
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  id                     String                      @id @default(uuid())
+  githubRepositoryId     BigInt                      @unique
+  installationId         String
+  installation           GithubInstallation          @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  owner                  String
+  name                   String
+  fullName               String
+  enabled                Boolean                     @default(true)
+  ruleConfiguration      Json                        @default("{}")
+  draftPullRequestPolicy String                      @default("SKIP")
+  checkRunMode           String                      @default("ADVISORY")
+  llmReviewEnabled       Boolean                     @default(false)
+  llmModel               String                      @default("gpt-5.6-sol")
+  retentionDays          Int                         @default(90)
+  reviewRuns             ReviewRun[]
+  accessGrants           GithubRepositoryAccess[]
+  auditLogs              AuditLog[]
+  evidenceExports        PullRequestEvidenceExport[]
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
 
   @@index([installationId, enabled])
   @@index([fullName])
@@ -127,6 +140,15 @@ model ReviewRun {
   retryable              Boolean               @default(true)
   failureCategory        FailureCategory?
   failureMessage         String?
+  checkRunId             BigInt?
+  checkRunUrl            String?
+  checkRunStatus         String?
+  checkRunConclusion     String?
+  reviewSummary          String?
+  llmState               String                @default("SKIPPED")
+  llmFailureMessage      String?
+  rerunReason            String?
+  rerunRequestedByUserId String?
   startedAt              DateTime?
   completedAt            DateTime?
   analyzedFileCount      Int                   @default(0)
@@ -139,6 +161,7 @@ model ReviewRun {
 
   @@index([state, nextAttemptAt])
   @@index([repositoryId, pullRequestNumber, createdAt])
+  @@index([repositoryId, pullRequestNumber, headSha])
 }
 
 model Finding {
@@ -148,6 +171,7 @@ model Finding {
   fingerprint       String
   ruleId            String
   ruleVersion       String
+  source            String           @default("DETERMINISTIC")
   category          FindingCategory
   severity          FindingSeverity
   confidence        Float
@@ -166,4 +190,50 @@ model Finding {
 
   @@unique([reviewRunId, fingerprint])
   @@index([reviewRunId, suppressed, severity])
+}
+
+model GithubRepositoryAccess {
+  id           String           @id @default(uuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repositoryId String
+  repository   GithubRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  role         String           @default("VIEWER")
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([userId, repositoryId])
+  @@index([repositoryId, role])
+}
+
+model AuditLog {
+  id           String            @id @default(uuid())
+  userId       String?
+  user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  repositoryId String?
+  repository   GithubRepository? @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  action       String
+  metadata     Json              @default("{}")
+  createdAt    DateTime          @default(now())
+
+  @@index([repositoryId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model PullRequestEvidenceExport {
+  id                String           @id @default(uuid())
+  repositoryId      String
+  repository        GithubRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  requestedByUserId String?
+  requestedBy       User?            @relation(fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  pullRequestNumber Int
+  headSha           String?
+  filename          String
+  markdown          String
+  markdownSha256    String
+  version           Int              @default(1)
+  createdAt         DateTime         @default(now())
+
+  @@unique([repositoryId, pullRequestNumber, version])
+  @@index([repositoryId, pullRequestNumber, createdAt])
 }

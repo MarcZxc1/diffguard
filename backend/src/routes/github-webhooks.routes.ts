@@ -9,8 +9,9 @@ import {
 } from "../services/github-webhook-delivery.service";
 
 const actionSchema = z.object({ action: z.string().optional() });
+const supportedPullRequestActions = ["opened", "synchronize", "reopened", "ready_for_review"] as const;
 const pullRequestPayloadSchema = z.object({
-  action: z.enum(["opened", "synchronize"]),
+  action: z.enum(supportedPullRequestActions),
   installation: z.object({ id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
   repository: z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -20,6 +21,7 @@ const pullRequestPayloadSchema = z.object({
   }),
   pull_request: z.object({
     number: z.number().int().positive(),
+    draft: z.boolean().optional(),
     head: z.object({ sha: z.string().min(7).max(100) }),
   }),
 });
@@ -73,7 +75,7 @@ export function createGithubWebhookHandler(
     if (!action.success) {
       return res.status(400).json({ error: "Incomplete pull request payload" });
     }
-    if (!["opened", "synchronize"].includes(action.data.action ?? "")) {
+    if (!supportedPullRequestActions.includes(action.data.action as typeof supportedPullRequestActions[number])) {
       return res.status(202).json({
         message: "Pull request action ignored",
         action: action.data.action,
@@ -97,10 +99,20 @@ export function createGithubWebhookHandler(
         repositoryFullName: parsed.data.repository.full_name,
         pullRequestNumber: parsed.data.pull_request.number,
         headSha: parsed.data.pull_request.head.sha,
+        action: parsed.data.action,
+        isDraft: parsed.data.pull_request.draft ?? false,
       });
 
       if (acceptance.kind === "disabled") {
         return res.status(202).json({ message: "Repository is disabled" });
+      }
+      if (acceptance.kind === "skipped") {
+        return res.status(202).json({
+          message: "Review skipped",
+          reviewRunId: acceptance.reviewRunId,
+          state: acceptance.state,
+          reason: acceptance.reason,
+        });
       }
       if (acceptance.kind === "duplicate") {
         return res.status(200).json({

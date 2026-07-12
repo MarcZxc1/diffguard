@@ -12,15 +12,26 @@ export type PullRequestDeliveryInput = {
   repositoryFullName: string;
   pullRequestNumber: number;
   headSha: string;
+  action: "opened" | "synchronize" | "reopened" | "ready_for_review";
+  isDraft: boolean;
 };
 
 export type DeliveryAcceptance =
   | { kind: "queued" | "requeued"; reviewRunId: string; state: "QUEUED" }
   | { kind: "duplicate"; reviewRunId: string; state: string }
+  | { kind: "skipped"; reviewRunId: string; state: "SKIPPED"; reason: string }
   | { kind: "disabled" };
 
 function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+function deliveryStateForReviewRun(state: string): "QUEUED" | "PROCESSING" | "SUCCEEDED" | "SKIPPED" | "FAILED" {
+  if (state === "PARTIAL") return "SUCCEEDED";
+  if (state === "SKIPPED") return "SKIPPED";
+  if (state === "FAILED") return "FAILED";
+  if (state === "PROCESSING") return "PROCESSING";
+  return state === "QUEUED" ? "QUEUED" : "SUCCEEDED";
 }
 
 export async function acceptGithubPullRequestDelivery(
@@ -57,19 +68,88 @@ export async function acceptGithubPullRequestDelivery(
       if (!installation.enabled || !repository.enabled) {
         return { kind: "disabled" as const };
       }
+      const shouldSkipDraft = input.isDraft && repository.draftPullRequestPolicy === "SKIP";
+      const existingRevision = await transaction.reviewRun.findFirst({
+        where: {
+          repositoryId: repository.id,
+          pullRequestNumber: input.pullRequestNumber,
+          headSha: input.headSha,
+        },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          state: true,
+          retryable: true,
+          attemptCount: true,
+          maxAttempts: true,
+        },
+      });
+      if (existingRevision) {
+        const shouldRequeueExisting =
+          (existingRevision.state === "FAILED" && existingRevision.retryable && existingRevision.attemptCount < existingRevision.maxAttempts) ||
+          (existingRevision.state === "SKIPPED" && input.action === "ready_for_review" && !input.isDraft);
+        if (shouldRequeueExisting) {
+          await transaction.reviewRun.update({
+            where: { id: existingRevision.id },
+            data: {
+              state: "QUEUED",
+              retryable: true,
+              nextAttemptAt: new Date(),
+              failureCategory: null,
+              failureMessage: null,
+              completedAt: null,
+              reviewSummary: null,
+              rerunReason: input.action === "ready_for_review" ? "ready_for_review" : "duplicate_revision_retry",
+            },
+          });
+          await transaction.githubWebhookDelivery.create({
+            data: {
+              deliveryId: input.deliveryId,
+              eventType: input.eventType,
+              state: "QUEUED",
+            },
+          });
+          return {
+            kind: "requeued" as const,
+            reviewRunId: existingRevision.id,
+            state: "QUEUED" as const,
+          };
+        }
+        await transaction.githubWebhookDelivery.create({
+          data: {
+            deliveryId: input.deliveryId,
+            eventType: input.eventType,
+            state: deliveryStateForReviewRun(existingRevision.state),
+            completedAt: ["SUCCEEDED", "PARTIAL", "SKIPPED", "FAILED"].includes(existingRevision.state)
+              ? new Date()
+              : null,
+          },
+        });
+        return {
+          kind: "duplicate" as const,
+          reviewRunId: existingRevision.id,
+          state: existingRevision.state,
+        };
+      }
 
       const delivery = await transaction.githubWebhookDelivery.create({
         data: {
           deliveryId: input.deliveryId,
           eventType: input.eventType,
-          state: "QUEUED",
+          state: shouldSkipDraft ? "SKIPPED" : "QUEUED",
+          completedAt: shouldSkipDraft ? new Date() : null,
           reviewRun: {
             create: {
               repositoryId: repository.id,
               pullRequestNumber: input.pullRequestNumber,
               headSha: input.headSha,
               ruleConfiguration: repository.ruleConfiguration as Prisma.InputJsonValue,
-              state: "QUEUED",
+              state: shouldSkipDraft ? "SKIPPED" : "QUEUED",
+              retryable: !shouldSkipDraft,
+              reviewSummary: shouldSkipDraft
+                ? "Skipped because this repository is configured to ignore draft pull requests."
+                : null,
+              completedAt: shouldSkipDraft ? new Date() : null,
             },
           },
         },
@@ -77,6 +157,14 @@ export async function acceptGithubPullRequestDelivery(
       });
       if (!delivery.reviewRun) {
         throw new Error("Queued delivery did not create a review run");
+      }
+      if (shouldSkipDraft) {
+        return {
+          kind: "skipped" as const,
+          reviewRunId: delivery.reviewRun.id,
+          state: "SKIPPED" as const,
+          reason: "draft_pull_request",
+        };
       }
       return {
         kind: "queued" as const,

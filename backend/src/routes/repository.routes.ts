@@ -1,9 +1,27 @@
 import { Router } from "express";
-import { updateRepositoryRules } from "../controllers/repository.controller";
+import {
+  getRepository,
+  getRepositoryMetrics,
+  listRepositories,
+  pruneRepositoryRetention,
+  updateRepositoryRules,
+  updateRepositorySettings,
+} from "../controllers/repository.controller";
+import {
+  downloadPullRequestEvidence,
+  previewPullRequestEvidence,
+} from "../controllers/evidence-export.controller";
 import { authMiddleware, requireRole } from "../middlewares/auth.middleware";
 
 export const repositoryRouter = Router();
 
+repositoryRouter.get("/", authMiddleware, listRepositories);
+repositoryRouter.get("/:id", authMiddleware, getRepository);
+repositoryRouter.get("/:id/metrics", authMiddleware, getRepositoryMetrics);
+repositoryRouter.patch("/:id/settings", authMiddleware, updateRepositorySettings);
+repositoryRouter.post("/:id/retention/prune", authMiddleware, pruneRepositoryRetention);
+repositoryRouter.post("/:id/evidence/preview", authMiddleware, previewPullRequestEvidence);
+repositoryRouter.post("/:id/evidence/download", authMiddleware, downloadPullRequestEvidence);
 repositoryRouter.patch(
   "/:id/rules",
   authMiddleware,

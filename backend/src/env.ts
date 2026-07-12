@@ -16,6 +16,9 @@ const envSchema = z.object({
   GITHUB_APP_ID: z.string().regex(/^\d+$/).optional(),
   GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
   GITHUB_APP_PRIVATE_KEY_PATH: z.string().min(1).optional(),
+
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  OPENAI_MODEL: z.string().min(1).default("gpt-5.6-sol"),
 });
 
 export const env = envSchema.parse(process.env);

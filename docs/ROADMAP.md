@@ -29,15 +29,15 @@ The current implementation:
 - Runs seven focused security rule families and one separate repository-policy rule through a versioned contract.
 - Supports repository rule enablement, severity thresholds, ignored paths, and reasoned suppressions.
 - Posts at most three inline security comments with stable fingerprint-marker deduplication.
-- Exposes sanitized review-run state to authenticated administrators.
-- Has 62 passing backend tests covering the Phase 0–2 contracts.
+- Publishes one GitHub Check Run summary per worker-processed revision, with bounded annotations.
+- Supports optional opt-in structured LLM review with fail-open behavior.
+- Exposes repository-scoped dashboard APIs, settings, metrics, reruns, retention pruning, audit logs, and sanitized PR evidence export.
+- Has 71 passing backend tests covering the Phase 0–5 contracts.
 
 Known remaining debt:
 
-- GitHub Check Runs and one coherent review summary begin in Phase 3.
 - Rule precision must still be measured in an advisory pilot before any finding can block merges.
 - The durable worker currently shares the API process; separate deployment is operational hardening.
-- The frontend is still an authentication scaffold.
 
 ## Phase 0 — Stabilize the Foundation
 
@@ -106,72 +106,78 @@ Exit criteria:
 
 Goal: provide one coherent review result rather than an uncontrolled stream of comments.
 
-- Publish a GitHub Check Run for queued, in-progress, successful, failed, and partial analysis states.
-- Attach bounded inline annotations/comments only for the most actionable findings.
-- Add a summary containing analyzed files, skipped files, rule versions, finding counts, and limitations.
-- Support safe re-request/re-run behavior and relevant PR actions such as reopening or becoming ready for review.
-- Respect draft pull-request policy and repository configuration.
-- Define when high-confidence findings may fail a required check.
+Status: implementation and local verification completed on 2026-07-12; required-check enforcement remains advisory until pilot precision evidence exists.
+
+- [x] Publish a GitHub Check Run for queued, in-progress, successful, failed, skipped, and partial analysis states.
+- [x] Attach bounded inline annotations/comments only for the most actionable findings.
+- [x] Add a summary containing analyzed files, skipped files, rule versions, finding counts, LLM state, and limitations.
+- [x] Support safe re-request/re-run behavior and relevant PR actions such as reopening or becoming ready for review.
+- [x] Respect draft pull-request policy and repository configuration.
+- [x] Define when high-confidence findings may fail a required check, while keeping default mode advisory.
 
 Exit criteria:
 
-- Each supported PR revision has one identifiable review result.
-- Contributors can distinguish clean, failed, partial, and skipped analysis.
-- Branch protection is enabled only after the advisory pilot meets reliability and precision targets.
+- [x] Each supported PR revision has one identifiable review result.
+- [x] Contributors can distinguish clean, failed, partial, and skipped analysis.
+- [ ] Branch protection is enabled only after the advisory pilot meets reliability and precision targets.
 
 ## Phase 4 — Optional Structured LLM Review
 
 Goal: add contextual review without making an LLM the authority for security decisions.
 
-- Send only the minimum required diff and sanitized repository context.
-- Treat code and comments as untrusted prompt content.
-- Validate model output with Zod and reject unknown fields, invalid locations, and unsupported severities.
-- Require evidence, remediation, confidence, and a deterministic finding fingerprint.
-- Deduplicate LLM findings against deterministic rules.
-- Apply strict finding limits, timeouts, cost limits, and fail-open behavior.
-- Document provider, retention, privacy, and repository-consent requirements before enabling the feature.
+Status: implementation and local verification completed on 2026-07-12; repository opt-in is required.
+
+- [x] Send only the minimum required diff and sanitized repository context.
+- [x] Treat code and comments as untrusted prompt content.
+- [x] Validate model output with Zod and reject unknown fields, invalid locations, and unsupported severities.
+- [x] Require evidence, remediation, confidence, and a deterministic finding fingerprint.
+- [x] Deduplicate LLM findings against deterministic rules.
+- [x] Apply strict finding limits, timeouts, cost limits, and fail-open behavior.
+- [x] Document provider, retention, privacy, and repository-consent requirements before enabling the feature.
 
 Exit criteria:
 
-- LLM failure cannot block deterministic analysis or webhook processing.
-- Invalid or locationless findings are never posted.
-- Repository owners explicitly opt in with understood data-handling rules.
+- [x] LLM failure cannot block deterministic analysis or webhook processing.
+- [x] Invalid or locationless findings are never posted.
+- [x] Repository owners explicitly opt in with understood data-handling rules.
 
 ## Phase 5 — Product Dashboard and Operations
 
 Goal: make review history, configuration, and operational health understandable.
 
-- Replace the starter frontend with repository, review-run, finding, and settings views.
-- Add installation/repository authorization boundaries and audit logs.
-- Show queued, processing, succeeded, failed, partial, and re-run states.
-- Add metrics for processing time, retry rate, GitHub API failures, rule precision, suppression rate, and skipped coverage.
-- Add retention and deletion controls for review data.
-- Add operational runbooks, backups, migrations, and deployment health checks.
+Status: implementation and local verification completed on 2026-07-12; pilot precision measurement still belongs to Phase 6.
+
+- [x] Replace the starter frontend with repository, review-run, finding, and settings views.
+- [x] Add installation/repository authorization boundaries and audit logs.
+- [x] Show queued, processing, succeeded, failed, partial, skipped, and re-run states.
+- [x] Add metrics for processing time, retry rate, GitHub API failures, suppression rate, and skipped coverage.
+- [x] Add retention and deletion controls for review data.
+- [x] Add operational runbooks, backups, migrations, and deployment health checks.
 
 ### Curated PR Evidence Export
 
 Add an explicit **Save PR Evidence** action for users who want to preserve an important pull request as thesis or project evidence.
 
-- Let an authorized user select a pull request, preview the content to be exported, and confirm the save intentionally. Do not export every pull request automatically.
-- Fetch authoritative PR metadata through the DiffGuard backend using the GitHub App installation token. The Vercel-hosted frontend must never receive GitHub App private keys or installation tokens.
-- Export the PR title, description snapshot, repository, PR number, author, status, relevant dates, source URL, head/merge commit, review/check summary, and user-written thesis relevance.
-- Treat GitHub as the source of truth. Include the source URL and export timestamp so the Markdown record is clearly a snapshot rather than an independent canonical copy.
-- Use a versioned Markdown schema with a filename such as `PR-0042 Add measurement validation.md` and a recommended destination of `11 Testing and QA/PR Reviews/` in the SNUHI vault.
-- Link milestone-level PR records from `SNUHI Phase 1 Implementation Memory.md` instead of copying every commit or review comment into the vault.
-- Keep the initial Vercel flow filesystem-independent: return a sanitized `.md` download that the user places in the vault. Consider an authenticated local Obsidian plugin or companion service only after the download workflow is safe and useful.
-- Authorize every export against the selected installation and repository, record who requested it, and rate-limit the endpoint.
-- Sanitize filenames, YAML values, Markdown, HTML, links, and Obsidian embed syntax. Apply size limits and prevent path traversal, frontmatter injection, template execution, or arbitrary destination paths.
-- Never export GitHub tokens, webhook data, full diffs, complete source patches, suspected credential values, private DiffGuard logs, or unnecessary sensitive data.
-- Make repeated exports deterministic using repository plus PR number as the identity. A later export should be an explicit refresh/revision, not a silently duplicated note.
+- [x] Let an authorized user select a pull request, preview the content to be exported, and confirm the save intentionally. Do not export every pull request automatically.
+- [x] Fetch authoritative PR metadata through the DiffGuard backend using the GitHub App installation token. The Vercel-hosted frontend must never receive GitHub App private keys or installation tokens.
+- [x] Export the PR title, description snapshot, repository, PR number, author, status, relevant dates, source URL, head/merge commit, review/check summary, and user-written thesis relevance.
+- [x] Treat GitHub as the source of truth. Include the source URL and export timestamp so the Markdown record is clearly a snapshot rather than an independent canonical copy.
+- [x] Use a versioned Markdown schema with a filename such as `PR-0042 Add measurement validation.md` and a recommended destination of `11 Testing and QA/PR Reviews/` in the SNUHI vault.
+- [x] Link milestone-level PR records from `SNUHI Phase 1 Implementation Memory.md` instead of copying every commit or review comment into the vault.
+- [x] Keep the initial Vercel flow filesystem-independent: return a sanitized `.md` download that the user places in the vault. Consider an authenticated local Obsidian plugin or companion service only after the download workflow is safe and useful.
+- [x] Authorize every export against the selected installation and repository, record who requested it, and rate-limit the endpoint.
+- [x] Sanitize filenames, YAML values, Markdown, HTML, links, and Obsidian embed syntax. Apply size limits and prevent path traversal, frontmatter injection, template execution, or arbitrary destination paths.
+- [x] Never export GitHub tokens, webhook data, full diffs, complete source patches, suspected credential values, private DiffGuard logs, or unnecessary sensitive data.
+- [x] Make repeated exports deterministic using repository plus PR number as the identity. A later export should be an explicit refresh/revision, not a silently duplicated note.
 
 Exit criteria:
 
-- Users see only installations and repositories they are authorized to manage.
-- Operators can diagnose failures without accessing secrets or complete source patches.
-- Retention, deletion, and backup behavior are documented and tested.
-- An authorized user can preview and download a sanitized PR Markdown record without exposing GitHub credentials to the browser.
-- Unauthorized repositories, unsafe filenames/content, excessive payloads, and duplicate export requests have tested failure behavior.
-- The exported note renders correctly in Obsidian and preserves a verifiable link to the original GitHub PR.
+- [x] Users see only installations and repositories they are authorized to manage.
+- [x] Operators can diagnose failures without accessing secrets or complete source patches.
+- [x] Retention, deletion, and backup behavior are documented and tested.
+- [x] An authorized user can preview and download a sanitized PR Markdown record without exposing GitHub credentials to the browser.
+- [x] Unauthorized repositories, unsafe filenames/content, excessive payloads, and duplicate export requests have tested failure behavior.
+- [x] The exported note renders correctly in Obsidian and preserves a verifiable link to the original GitHub PR.
 
 ## Phase 6 — SNUHI Pilot
 

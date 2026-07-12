@@ -10,10 +10,11 @@ Configure the App with the smallest permissions used by the current MVP:
 | --- | --- | --- |
 | Metadata | Read-only | Granted automatically by GitHub for basic repository identity. |
 | Pull requests | Read and write | Reads changed files and publishes inline review comments. |
+| Checks | Read and write | Publishes one coherent DiffGuard Check Run per reviewed PR revision. |
 
-Subscribe only to the **Pull request** repository event. DiffGuard currently processes the `opened` and `synchronize` actions; other events and actions receive a `202` ignored response. Install the App only on repositories that should be reviewed.
+Subscribe only to the **Pull request** repository event. DiffGuard currently processes the `opened`, `synchronize`, `reopened`, and `ready_for_review` actions; other events and actions receive a `202` ignored response. Install the App only on repositories that should be reviewed.
 
-The App does not currently create Check Runs, read repository contents through the Contents API, or request organization permissions. Those settings belong to later roadmap phases and should not be granted early.
+The App does not read repository contents through the Contents API or request organization permissions.
 
 ## Bruno request
 
@@ -93,9 +94,9 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:3000/api/review-runs/<review-run-id>"
 ```
 
-The response exposes `QUEUED`, `PROCESSING`, `SUCCEEDED`, `PARTIAL`, or `FAILED`, attempt counts, sanitized failure category/message, analyzed/skipped file counts, and findings. It never returns installation tokens, full patches, or suspected credential values.
+The response exposes `QUEUED`, `PROCESSING`, `SUCCEEDED`, `PARTIAL`, `SKIPPED`, or `FAILED`, attempt counts, sanitized failure category/message, Check Run metadata, analyzed/skipped file counts, LLM state, and findings. It never returns installation tokens, full patches, or suspected credential values.
 
-Retryable network, timeout, rate-limit, and GitHub 5xx failures automatically return to `QUEUED` with bounded backoff until three attempts are exhausted. Replaying a delivery for a retryable recorded failure can requeue it without deleting database rows. Comment retries search GitHub for the finding's HMAC-authenticated hidden marker before posting.
+Retryable network, timeout, rate-limit, and GitHub 5xx failures automatically return to `QUEUED` with bounded backoff until three attempts are exhausted. Replaying a delivery for a retryable recorded failure can requeue it without deleting database rows. Comment retries search GitHub for the finding's HMAC-authenticated hidden marker before posting. Check Runs are created/updated by the worker after it obtains an installation token; missing Checks permission will fail the review with a sanitized GitHub authorization/configuration state.
 
 ## Response guide
 
@@ -104,6 +105,7 @@ Retryable network, timeout, rate-limit, and GitHub 5xx failures automatically re
 | `202 Webhook queued` | The supported delivery and review run committed atomically. | Use the returned `reviewRunId`; GitHub API work happens in the worker. |
 | `200 Webhook already registered` | GitHub retried an existing delivery ID. | Inspect the returned real run state; no second run is created. |
 | `202 Repository is disabled` | The installation or repository is persisted but disabled. | Enable it intentionally before expecting review work. |
+| `202 Review skipped` | The repository policy intentionally skipped the delivery, such as a draft pull request. | Check repository settings if the draft should be analyzed. |
 | `503 Unable to queue GitHub review` | Durable persistence failed, so no success acknowledgement was sent. | GitHub may retry; check PostgreSQL health without deleting delivery state. |
 | `202 Event ignored` | Signature was valid but the event is not `pull_request`. | Set `x-github-event: pull_request`. |
 | `202 Pull request action ignored` | Signature was valid but action is not `opened` or `synchronize`. | Check body `action`. |
