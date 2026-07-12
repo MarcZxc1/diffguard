@@ -117,6 +117,7 @@ model GithubRepository {
   accessGrants           GithubRepositoryAccess[]
   auditLogs              AuditLog[]
   evidenceExports        PullRequestEvidenceExport[]
+  precisionSnapshots     PilotPrecisionSnapshot[]
   createdAt              DateTime                    @default(now())
   updatedAt              DateTime                    @updatedAt
 
@@ -183,6 +184,10 @@ model Finding {
   remediation       String
   suppressed        Boolean          @default(false)
   suppressionReason String?
+  pilotVerification String?
+  pilotVerifiedAt   DateTime?
+  pilotVerifiedBy   String?
+  pilotNotes        String?
   publicationState  PublicationState @default(PENDING)
   githubCommentId   BigInt?
   createdAt         DateTime         @default(now())
@@ -236,4 +241,19 @@ model PullRequestEvidenceExport {
 
   @@unique([repositoryId, pullRequestNumber, version])
   @@index([repositoryId, pullRequestNumber, createdAt])
+}
+
+model PilotPrecisionSnapshot {
+  id                 String           @id @default(uuid())
+  repositoryId       String
+  repository         GithubRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  ruleId             String
+  totalFindings      Int
+  confirmedCount     Int
+  falsePositiveCount Int
+  unverifiedCount    Int
+  precision          Float
+  snapshotAt         DateTime         @default(now())
+
+  @@index([repositoryId, ruleId, snapshotAt])
 }
