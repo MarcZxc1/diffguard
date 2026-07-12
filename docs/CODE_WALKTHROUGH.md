@@ -13,9 +13,10 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/tsconfig.json`: strict TypeScript settings. `noEmit` makes this configuration a verifier rather than a compiler.
 - `backend/.env`: local secrets and connection strings. It is deliberately not documented with real values and must not be committed.
 - `backend/prisma.config.ts`: tells Prisma where the schema is and which connection URL to use for CLI commands.
-- `backend/prisma/schema.prisma`: defines users plus durable GitHub installations, repositories, access grants, deliveries, review runs, findings, Check Run state, LLM state, audit logs, evidence exports, state/failure enums, repository rule configuration, retry scheduling, and idempotent fingerprint constraints.
+- `backend/prisma/schema.prisma`: defines users plus GitHub OAuth identity/token state, one-time OAuth login exchanges, durable GitHub installations, repositories, access grants, deliveries, review runs, findings, Check Run state, LLM state, audit logs, evidence exports, state/failure enums, repository rule configuration, retry scheduling, and idempotent fingerprint constraints.
 - `backend/prisma/migrations/20260712090000_phase_1_2_foundation/migration.sql`: creates the complete migration-managed schema and additively extends a Phase 0 delivery table when present.
 - `backend/prisma/migrations/20260712110000_phase_3_5_review_experience/migration.sql`: additively adds Check Run, LLM, authorization, audit, retention, and PR evidence export state.
+- `backend/prisma/migrations/20260712140000_phase_7_oauth/migration.sql`: adds GitHub OAuth user linking, encrypted-token storage, and one-time OAuth login exchange state. It drops the earlier plaintext OAuth token column if a local database had it from the unsafe draft implementation.
 - `backend/docker-compose.yml`: starts Postgres on host port `54519` and Redis on host port `63707`. The services retain data in named Docker volumes.
 
 ## Backend entry point and environment
@@ -34,25 +35,27 @@ This guide explains the role of every maintained source file. Read the source be
 ## HTTP routing
 
 - `backend/src/routes/health.routes.ts`: exposes `GET /api/health`; `SELECT 1` is the smallest useful database probe.
-- `backend/src/routes/auth.routes.ts`: maps registration and login URLs to controller functions.
+- `backend/src/routes/auth.routes.ts`: maps registration, login, GitHub OAuth start/callback, and one-time OAuth exchange URLs to controller functions.
 - `backend/src/routes/user.routes.ts`: protects both user endpoints with JWT authentication and an `ADMIN` role check before the controller runs.
 - `backend/src/routes/github-webhooks.routes.ts`: verifies the exact raw-body HMAC, validates the supported pull-request payload with Zod, handles opened/synchronize/reopened/ready-for-review actions, and delegates one atomic durable enqueue or configured draft skip. It returns `202` without authenticating to GitHub or scanning patches. Duplicates report the existing run state rather than pretending a failed run succeeded.
 - `backend/src/routes/review-run.routes.ts`: exposes one sanitized review run and manual rerun behavior to users authorized for the repository.
-- `backend/src/routes/repository.routes.ts`: exposes authorized repository listing, detail, settings, metrics, retention prune, rule configuration, PR evidence export, pilot finding verification, and pilot precision endpoints.
+- `backend/src/routes/repository.routes.ts`: exposes GitHub repository discovery/connection plus authorized repository listing, detail, settings, metrics, retention prune, rule configuration, PR evidence export, pilot finding verification, and pilot precision endpoints.
 
 ## Controllers, services, and middleware
 
-- `backend/src/controllers/auth.controller.ts`: Zod validates request JSON, Argon2 hashes or verifies passwords, Prisma looks up or writes the user, and `jsonwebtoken` signs a short-lived JWT. Login intentionally uses the same error for an unknown email and wrong password so callers cannot enumerate accounts.
+- `backend/src/controllers/auth.controller.ts`: Zod validates request JSON, Argon2 hashes or verifies passwords, starts GitHub OAuth with state protection, exchanges GitHub codes, links or creates OAuth users, records one-time login exchange codes, and signs backend JWTs. Login intentionally uses the same error for an unknown email and wrong password so callers cannot enumerate accounts.
 - `backend/src/controllers/user.controller.ts`: validates the admin create-user body and delegates all data work to `userService`.
 - `backend/src/services/user.service.ts`: caches a public projection of the user list for 60 seconds. Admin creation hashes the required password, persists it, returns only public fields, and removes the cache so the next list is fresh.
 - `backend/src/services/user.service.test.ts`: verifies that the admin-supplied password is transformed before persistence.
 - `backend/src/services/github-webhook-delivery.service.ts`: transactionally upserts installation/repository identity and creates a unique delivery plus queued review run. It respects enabled state, returns the current state for duplicates, and atomically requeues a recorded retryable failure when attempts remain.
 - `backend/src/services/review-worker.ts`: polls the durable queue, atomically claims one due run, heartbeats the attempt, recovers abandoned work, and delegates processing. Attempt-count guards prevent an expired worker from overwriting a newer claim.
 - `backend/src/services/review-processor.ts`: exchanges the installation token, publishes Check Run lifecycle state, fetches/assesses patches, runs the configuration snapshot, optionally runs fail-open structured LLM review, persists findings, deduplicates bounded comments, completes clean/partial runs, and records bounded retry or sanitized terminal failure state.
-- `backend/src/services/llm-review.service.ts`: builds bounded redacted added-line context, calls the OpenAI Responses API only for opted-in repositories with credentials configured, validates strict structured output with Zod, rejects invalid locations, and fails open.
+- `backend/src/services/llm-review.service.ts`: builds bounded redacted added-line context, calls the OpenAI Responses API only for opted-in repositories with credentials configured, validates strict structured output with Zod, rejects invalid locations, fails open, and exposes a synthetic no-code OpenAI health check for dashboard testing.
 - `backend/src/services/review-run.service.ts`: selects the public operational view of a review run and converts GitHub bigint IDs to JSON-safe strings.
-- `backend/src/services/repository.service.ts`: validates and persists repository settings, rule configuration, metrics, manual reruns, retention pruning, and repository dashboard projections.
+- `backend/src/services/repository.service.ts`: validates and persists repository settings, rule configuration, metrics, manual reruns, retention pruning, and repository dashboard projections including sanitized LLM failure messages.
 - `backend/src/services/repository-authorization.service.ts`: centralizes repository access checks and audit-log recording.
+- `backend/src/services/oauth-token.service.ts`: encrypts user GitHub OAuth tokens with AES-256-GCM and hashes short-lived OAuth exchange codes so raw credentials or exchange codes are not stored.
+- `backend/src/services/github-permissions.service.ts`: converts GitHub repository permissions into DiffGuard onboarding decisions. Self-service connection requires `admin` or `maintain`, because connecting grants manager-level dashboard access.
 - `backend/src/services/evidence-export.service.ts`: fetches authoritative PR metadata with the GitHub App token and produces sanitized Markdown previews/downloads without exporting patches, secrets, or private logs.
 - `backend/src/services/pilot.service.ts`: records repository-bound finding verification decisions and computes advisory pilot precision grouped by rule.
 - `backend/src/services/pilot-gate.service.ts`: keeps the future enforcement decision pure by requiring both minimum precision and minimum verified sample size.
@@ -81,7 +84,7 @@ This guide explains the role of every maintained source file. Read the source be
 - `frontend/tsconfig*.json`: separates browser TypeScript settings from Vite/Node configuration.
 - `frontend/index.html`: Vite's HTML shell; `#root` is where React renders.
 - `frontend/src/main.tsx`: creates the React root and wraps the app in `StrictMode`, which helps surface unsafe development behavior.
-- `frontend/src/App.tsx`: stores the JWT in `localStorage`, renders login/register, lists authorized repositories, shows review-run states, metrics, pilot precision, updates repository settings, triggers reruns, and previews/downloads sanitized PR evidence Markdown.
+- `frontend/src/App.tsx`: exchanges GitHub OAuth callback codes for backend JWTs, stores the JWT in `localStorage`, renders login/register/GitHub sign-in, lists and connects authorized repositories, shows review-run states, metrics, pilot precision, updates repository settings, triggers reruns, and previews/downloads sanitized PR evidence Markdown.
 - `frontend/src/index.css`: imports Tailwind CSS.
 - `frontend/src/App.css`: leftover Vite starter styles. `App.tsx` uses Tailwind utility classes instead, so remove this file and import only when the final UI no longer needs it.
 - `frontend/src/assets/*` and `frontend/public/*`: starter images/icons; preserve only assets used by the final product.

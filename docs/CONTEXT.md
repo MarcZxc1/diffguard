@@ -11,9 +11,9 @@ DiffGuard is a focused GitHub pull-request security assistant. GitHub sends a si
 | Runtime | Bun | Runs TypeScript, scripts, and tests quickly. |
 | API | Express 5 + TypeScript | Defines HTTP routes and middleware. |
 | Validation | Zod | Rejects malformed environment variables and request bodies. |
-| Database | PostgreSQL + Prisma 7 | Stores users and future product data. |
+| Database | PostgreSQL + Prisma 7 | Stores users and future product data. Works with Docker, local PostgreSQL, or a managed PostgreSQL service such as Supabase through a normal connection string. |
 | Cache | Redis + ioredis | Caches the admin user-list response. |
-| Auth | Argon2 + JWT | Hashes passwords and authenticates requests. |
+| Auth | Argon2 + JWT + GitHub OAuth | Hashes fallback passwords, supports GitHub sign-in, and authenticates API requests with backend-issued JWTs. |
 | Client | React 19 + Vite + Tailwind CSS | Provides the browser application. |
 | Local services | Docker Compose | Starts isolated Postgres and Redis containers. |
 
@@ -40,7 +40,7 @@ GitHub signs the **exact request bytes**, not a re-formatted JSON object. That i
 
 ## Local setup
 
-Use two terminals from the repository root:
+Use two terminals from the repository root when you want the default local Docker setup:
 
 ```fish
 cd backend
@@ -56,6 +56,8 @@ bun dev
 
 The API defaults to `http://localhost:3000`; Vite normally serves the client at `http://localhost:5173`.
 
+The backend only depends on a PostgreSQL connection string, so a managed PostgreSQL service such as Supabase or a locally installed PostgreSQL server can be used instead of Docker if you prefer. Docker Compose is simply the fastest local path.
+
 Create `backend/.env` locally. Do not commit this file or paste its values into documentation:
 
 ```dotenv
@@ -65,6 +67,11 @@ JWT_SECRET=replace-with-a-long-random-secret
 GITHUB_WEBHOOK_SECRET=replace-with-the-GitHub-webhook-secret
 GITHUB_APP_ID=123456
 GITHUB_APP_PRIVATE_KEY_PATH=/absolute/path/to/github-app.private-key.pem
+GITHUB_CLIENT_ID=optional-for-github-oauth
+GITHUB_CLIENT_SECRET=optional-for-github-oauth
+GITHUB_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/github/callback
+GITHUB_OAUTH_TOKEN_ENCRYPTION_KEY=optional-32-plus-character-token-key
+FRONTEND_URL=http://localhost:5173
 OPENAI_API_KEY=optional-for-opted-in-llm-review
 OPENAI_MODEL=gpt-5.6-sol
 PORT=3000
@@ -79,16 +86,22 @@ PORT=3000
 | GET | `/api/health` | No | Checks whether Postgres accepts `SELECT 1`. |
 | POST | `/api/auth/register` | No | Creates a user and returns a 15-minute JWT. |
 | POST | `/api/auth/login` | No | Verifies credentials and returns a JWT. |
+| GET | `/api/auth/github` | No | Starts GitHub OAuth with an HTTP-only state cookie. |
+| GET | `/api/auth/github/callback` | GitHub redirect + state cookie | Exchanges the GitHub code, links or creates the user, stores the user OAuth token encrypted, and redirects the browser with a short-lived one-time exchange code. |
+| POST | `/api/auth/github/exchange` | One-time code | Consumes the one-time OAuth exchange code and returns the backend JWT. |
 | GET | `/api/users` | Admin JWT | Returns cached user records. |
 | POST | `/api/users` | Admin JWT | Creates a user from `email`, optional `name`, and a password of at least eight characters. Passwords are hashed and omitted from responses. |
 | POST | `/api/webhook/github` | GitHub HMAC | Atomically queues supported `opened` and `synchronize` deliveries and returns the durable review-run ID. |
 | GET | `/api/webhook/github` | No | Returns 405 because webhooks are POST-only. |
 | GET | `/api/review-runs/:id` | Admin JWT | Returns the durable state, sanitized failure, coverage counts, and persisted findings for one run. |
 | PATCH | `/api/repositories/:id/rules` | Admin JWT | Replaces a repository's validated rule configuration for future review runs. |
+| GET | `/api/repositories/github/discover` | JWT + connected GitHub account | Lists GitHub App installations and repositories visible to the signed-in GitHub user, including whether DiffGuard is installed and whether the user has admin/maintain permission to connect it. |
+| POST | `/api/repositories/github/connect` | JWT + GitHub admin/maintain permission | Grants the signed-in user DiffGuard manager access to an installed repository after verifying GitHub permissions. |
 | GET | `/api/repositories` | JWT | Lists repositories visible to the user. Admins see all repositories; other users need a repository access grant. |
 | GET | `/api/repositories/:id` | JWT + repository access | Returns settings and recent review runs for one repository. |
 | PATCH | `/api/repositories/:id/settings` | JWT + repository manager | Updates enabled state, draft policy, Check Run mode, LLM opt-in/model, retention days, or rule configuration. |
 | GET | `/api/repositories/:id/metrics` | JWT + repository access | Returns processing, retry, GitHub failure, suppression, and skipped-coverage metrics. |
+| POST | `/api/repositories/:id/ai/test` | JWT + repository manager | Sends a tiny synthetic OpenAI structured-output health request for the repository model and returns a sanitized status for dashboard toast feedback. |
 | POST | `/api/repositories/:id/retention/prune` | JWT + repository manager | Deletes review runs older than the repository retention window and audits the action. |
 | POST | `/api/review-runs/:id/rerun` | JWT + repository manager | Clears findings and safely requeues the existing review run. |
 | POST | `/api/repositories/:id/evidence/preview` | JWT + repository manager | Fetches PR metadata with the GitHub App token and returns sanitized Markdown preview JSON. |
@@ -115,8 +128,9 @@ PORT=3000
 - File pagination is bounded at 3,000 returned files. Hitting that bound, missing patches, deleted files, or truncated patches produces `PARTIAL`, never a clean result.
 - Check Runs are created by the worker after it obtains an installation token. They move through queued, in-progress, and completed states and include bounded annotations plus a summary of analyzed files, skipped files, rules, finding counts, LLM state, and limitations.
 - Finding fingerprints include the head revision, rule identity/version, file, and line. Inline comments carry an HMAC-authenticated hidden marker, allowing a retry to find an external comment after a database-write failure without letting contributors forge a predictable marker.
-- LLM review is disabled by default. When repository owners opt in and `OPENAI_API_KEY` is configured, DiffGuard sends only bounded, redacted added-line context to the Responses API using strict structured output. Invalid output, unavailable OpenAI service, or invalid line locations fail open and cannot block deterministic review or webhook processing.
+- LLM review is disabled by default. When repository owners opt in and `OPENAI_API_KEY` is configured, DiffGuard sends only bounded, redacted added-line context to the Responses API using strict structured output. Invalid output, unavailable OpenAI service, or invalid line locations fail open and cannot block deterministic review or webhook processing. Maintainers can test the configured OpenAI path from the dashboard; the health check sends no repository code and returns only sanitized status-level messages.
 - Repository-scoped read operations require either an admin role or an explicit `GithubRepositoryAccess` grant. Material settings, rerun, retention, and evidence actions require admin or a `MANAGER`/`OWNER` repository grant and are written to `AuditLog`.
+- GitHub OAuth is used only for user sign-in, repository discovery, and self-service repository connection. The browser never receives a GitHub OAuth token, and the callback does not put the backend JWT in the URL. User OAuth tokens are encrypted at rest and only `admin` or `maintain` GitHub repository permissions can create a DiffGuard manager grant.
 - Curated PR evidence export fetches authoritative PR metadata through the backend GitHub App token and returns/downloads sanitized Markdown. It does not export tokens, webhook payloads, full diffs, complete patches, suspected credential values, or private logs.
 - Pilot verification is repository-bound: managers can only verify findings whose review run belongs to the selected repository, and each verification is audited.
 

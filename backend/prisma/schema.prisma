@@ -63,16 +63,31 @@ enum PublicationState {
 }
 
 model User {
-  id                 String                     @id @default(uuid())
-  email              String                     @unique
-  password           String
-  name               String?
-  role               Role                       @default(USER)
-  repositoryAccesses GithubRepositoryAccess[]
-  auditLogs          AuditLog[]
-  evidenceExports    PullRequestEvidenceExport[]
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
+  id                          String                      @id @default(uuid())
+  email                       String                      @unique
+  password                    String?
+  name                        String?
+  role                        Role                        @default(USER)
+  githubId                    String?                     @unique
+  githubAccessTokenCiphertext String?
+  repositoryAccesses          GithubRepositoryAccess[]
+  auditLogs                   AuditLog[]
+  evidenceExports             PullRequestEvidenceExport[]
+  oauthLoginExchanges         OAuthLoginExchange[]
+  createdAt                   DateTime                    @default(now())
+  updatedAt                   DateTime                    @updatedAt
+}
+
+model OAuthLoginExchange {
+  id         String    @id @default(uuid())
+  codeHash   String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([expiresAt])
 }
 
 model GithubWebhookDelivery {

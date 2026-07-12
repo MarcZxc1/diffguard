@@ -8,6 +8,9 @@ import {
   updateRepositorySettings,
   verifyFindingController,
   getPilotPrecisionController,
+  discoverGithubRepositories,
+  connectGithubRepository,
+  testRepositoryAiReviewController,
 } from "../controllers/repository.controller";
 import {
   downloadPullRequestEvidence,
@@ -17,9 +20,13 @@ import { authMiddleware, requireRole } from "../middlewares/auth.middleware";
 
 export const repositoryRouter = Router();
 
+repositoryRouter.get("/github/discover", authMiddleware, discoverGithubRepositories);
+repositoryRouter.post("/github/connect", authMiddleware, connectGithubRepository);
+
 repositoryRouter.get("/", authMiddleware, listRepositories);
 repositoryRouter.get("/:id", authMiddleware, getRepository);
 repositoryRouter.get("/:id/metrics", authMiddleware, getRepositoryMetrics);
+repositoryRouter.post("/:id/ai/test", authMiddleware, testRepositoryAiReviewController);
 repositoryRouter.patch("/:id/settings", authMiddleware, updateRepositorySettings);
 repositoryRouter.post("/:id/retention/prune", authMiddleware, pruneRepositoryRetention);
 repositoryRouter.post("/:id/evidence/preview", authMiddleware, previewPullRequestEvidence);

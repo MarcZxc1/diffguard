@@ -194,7 +194,79 @@ Goal: validate DiffGuard safely on the target repository before relying on it as
 
 Pilot evidence belongs primarily in GitHub. Thesis documentation should link important PRs and summarize outcomes rather than duplicate every commit or comment.
 
-## Phase 7 — Style and Maintainability Policies
+## Phase 7 — User Authentication & Direct Repository Connection
+
+Goal: add GitHub OAuth 2.0 sign-in so individual users can authenticate with GitHub, discover repositories they already have access to, and connect a chosen repository to DiffGuard without manual database editing.
+
+Status: direct GitHub OAuth implementation and local verification completed on 2026-07-12. Supabase remains an allowed future auth provider, but the current code path is direct GitHub OAuth backed by PostgreSQL-compatible Prisma tables.
+
+Implementation may use either:
+
+1. a direct GitHub OAuth 2.0 authorization-code flow owned by DiffGuard, or
+2. a Supabase GitHub provider flow that still gives DiffGuard the authenticated user identity and repository-selection data it needs.
+
+Important boundary: GitHub OAuth is for user identity, repository discovery, and self-service onboarding. The GitHub App remains the integration that receives webhooks, fetches PR content, and publishes review results.
+
+1. [x] Implement the GitHub OAuth 2.0 authorization-code flow for user sign-in and token exchange.
+2. [x] Link the GitHub identity to the existing DiffGuard user record or create one on first sign-in.
+3. [x] Use GitHub API access to list repositories the signed-in user can manage or inspect, depending on the permissions granted.
+4. [x] Provide a self-service UI that lets a signed-in user select a repository and connect it to DiffGuard.
+5. [x] Store necessary auth material securely for the direct-OAuth path: use an HTTP-only OAuth state cookie, store user OAuth tokens encrypted at rest, and exchange callback success through a short-lived one-time backend code instead of a URL JWT.
+6. [x] Make repository connection checks use the signed-in user's GitHub permissions: only GitHub `admin` or `maintain` can create a DiffGuard `MANAGER` grant.
+7. [x] Keep the current local username/password flow as an operational fallback.
+8. [x] Keep the persistence layer PostgreSQL-compatible across Docker Compose, a locally installed PostgreSQL server, or a managed PostgreSQL service such as Supabase.
+
+Exit criteria:
+
+- [x] A user can sign in with GitHub and reach the dashboard without manual DB grants.
+- [x] The dashboard shows only repositories discoverable through the signed-in GitHub user's App installations and clearly disables repositories the user cannot legitimately connect.
+- [x] A selected repository can be connected end-to-end without touching the database by hand.
+- [x] Auth/session handling avoids exposing GitHub tokens or backend JWTs in callback URLs.
+- [x] The GitHub App still owns review execution, checks, and comments.
+- [x] The repository backend runs unchanged against Docker Postgres, local Postgres, or Supabase Postgres.
+- [ ] Production deployments should add token revocation/expiry handling and, if GitHub expiring user tokens are enabled, refresh-token support or a clear re-authentication path.
+
+## Phase 7.1 — Dashboard Observability and AI Review Operations
+
+Goal: make review progress and optional AI review status understandable without requiring manual refreshes or noisy PR comments.
+
+Important boundary: AI infrastructure failures are operational signals, not contributor review comments. The frontend should show detailed AI status for maintainers. The GitHub Check Run should summarize AI coverage briefly. Inline PR comments should be reserved for actionable validated findings only.
+
+1. Add near-realtime dashboard updates for repository review runs so users do not need to click Refresh after opening a PR or rerunning a review.
+   - Preferred first implementation: bounded polling while the selected repository has `QUEUED` or `PROCESSING` runs.
+   - Future upgrade: Server-Sent Events or WebSocket stream if polling becomes noisy.
+   - Preserve explicit loading, stale, error, and empty states.
+2. Surface richer LLM review state in the frontend review-run table or detail panel.
+   - Show `SKIPPED`, `SUCCEEDED`, or `FAILED`.
+   - Show sanitized `llmFailureMessage` when failed.
+   - Clarify that deterministic review still completed when LLM fails open.
+3. Improve sanitized LLM failure recording.
+   - Store safe status-level messages such as `OpenAI review request failed with status 400`.
+   - Do not persist OpenAI response bodies, prompts, authorization headers, API keys, raw patches, or suspected secret values.
+4. Add a manager-only **Test AI Review** button in repository settings.
+   - Backend endpoint should send a tiny synthetic structured-output request to the configured model.
+   - It should verify API reachability, authentication, quota/rate-limit status, model availability, and structured-output compatibility.
+   - It must not send repository code for this health check.
+5. Display a toast after testing AI review.
+   - Success example: `AI review is reachable for gpt-5.6-sol.`
+   - Failure examples: `OpenAI authentication failed`, `quota or rate limit reached`, `model does not support required structured output`, or `request timed out`.
+   - Toasts should avoid leaking secrets or raw upstream response bodies.
+6. Include AI status in the GitHub Check Run summary only at coverage level.
+   - Good: `LLM review: failed open; deterministic checks completed.`
+   - Avoid posting PR comments for AI infrastructure failures.
+7. Allow AI-generated PR comments only for validated actionable findings.
+   - The finding must map to an added line, pass strict schema validation, include evidence/remediation, and be deduplicated against deterministic findings.
+   - Label them clearly as AI-assisted findings.
+
+Exit criteria:
+
+- Review-run state updates appear in the dashboard automatically during active processing.
+- Maintainers can test OpenAI configuration from the dashboard and receive a toast result.
+- LLM failure reasons are visible in the frontend and sanitized in persisted data.
+- GitHub Check Runs summarize AI coverage without creating noisy infrastructure-failure comments.
+- AI-generated PR comments are only posted for validated actionable findings.
+
+## Phase 8 — Style and Maintainability Policies
 
 Future work may add advisory policy checks for naming conventions and other maintainability standards, such as camelCase for multi-word identifiers, PascalCase for classes, and repository-specific file or folder naming conventions.
 
