@@ -38,7 +38,7 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/src/routes/user.routes.ts`: protects both user endpoints with JWT authentication and an `ADMIN` role check before the controller runs.
 - `backend/src/routes/github-webhooks.routes.ts`: verifies the exact raw-body HMAC, validates the supported pull-request payload with Zod, handles opened/synchronize/reopened/ready-for-review actions, and delegates one atomic durable enqueue or configured draft skip. It returns `202` without authenticating to GitHub or scanning patches. Duplicates report the existing run state rather than pretending a failed run succeeded.
 - `backend/src/routes/review-run.routes.ts`: exposes one sanitized review run and manual rerun behavior to users authorized for the repository.
-- `backend/src/routes/repository.routes.ts`: exposes authorized repository listing, detail, settings, metrics, retention prune, rule configuration, and PR evidence export endpoints.
+- `backend/src/routes/repository.routes.ts`: exposes authorized repository listing, detail, settings, metrics, retention prune, rule configuration, PR evidence export, pilot finding verification, and pilot precision endpoints.
 
 ## Controllers, services, and middleware
 
@@ -54,6 +54,8 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/src/services/repository.service.ts`: validates and persists repository settings, rule configuration, metrics, manual reruns, retention pruning, and repository dashboard projections.
 - `backend/src/services/repository-authorization.service.ts`: centralizes repository access checks and audit-log recording.
 - `backend/src/services/evidence-export.service.ts`: fetches authoritative PR metadata with the GitHub App token and produces sanitized Markdown previews/downloads without exporting patches, secrets, or private logs.
+- `backend/src/services/pilot.service.ts`: records repository-bound finding verification decisions and computes advisory pilot precision grouped by rule.
+- `backend/src/services/pilot-gate.service.ts`: keeps the future enforcement decision pure by requiring both minimum precision and minimum verified sample size.
 - `backend/src/middlewares/auth.middleware.ts`: reads `Authorization: Bearer <JWT>`, verifies it, and saves the token subject and role on the request. `requireRole` runs after it and rejects unsuitable roles.
 - `backend/src/middlewares/error.middleware.ts`: turns known `HttpError` instances into intentional client responses. Unknown errors are logged only on the server and return a generic 500 response.
 
@@ -79,7 +81,7 @@ This guide explains the role of every maintained source file. Read the source be
 - `frontend/tsconfig*.json`: separates browser TypeScript settings from Vite/Node configuration.
 - `frontend/index.html`: Vite's HTML shell; `#root` is where React renders.
 - `frontend/src/main.tsx`: creates the React root and wraps the app in `StrictMode`, which helps surface unsafe development behavior.
-- `frontend/src/App.tsx`: stores the JWT in `localStorage`, renders login/register, lists authorized repositories, shows review-run states and metrics, updates repository settings, triggers reruns, and previews/downloads sanitized PR evidence Markdown.
+- `frontend/src/App.tsx`: stores the JWT in `localStorage`, renders login/register, lists authorized repositories, shows review-run states, metrics, pilot precision, updates repository settings, triggers reruns, and previews/downloads sanitized PR evidence Markdown.
 - `frontend/src/index.css`: imports Tailwind CSS.
 - `frontend/src/App.css`: leftover Vite starter styles. `App.tsx` uses Tailwind utility classes instead, so remove this file and import only when the final UI no longer needs it.
 - `frontend/src/assets/*` and `frontend/public/*`: starter images/icons; preserve only assets used by the final product.

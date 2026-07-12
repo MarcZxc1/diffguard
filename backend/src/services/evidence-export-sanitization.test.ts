@@ -1,15 +1,5 @@
 import { describe, test, expect } from "bun:test";
-
-// Test the sanitizeScalar function directly
-function sanitizeScalar(value: unknown) {
-  return String(value ?? "")
-    .replace(/[\0-\x08\x0b\x0c\x0e-\x1f]/g, " ")
-    .replace(/\r\n?/g, "\n")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/!\[\[.*?\]\]/g, "[removed embed]")
-    .replace(/\{\{.*?\}\}/g, "[removed template]")
-    .slice(0, 20_000);
-}
+import { sanitizeScalar } from "./evidence-export.service";
 
 describe("evidence export sanitization", () => {
   test("strips control characters", () => {

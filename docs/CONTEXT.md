@@ -93,6 +93,8 @@ PORT=3000
 | POST | `/api/review-runs/:id/rerun` | JWT + repository manager | Clears findings and safely requeues the existing review run. |
 | POST | `/api/repositories/:id/evidence/preview` | JWT + repository manager | Fetches PR metadata with the GitHub App token and returns sanitized Markdown preview JSON. |
 | POST | `/api/repositories/:id/evidence/download` | JWT + repository manager | Records an audited evidence export and returns a sanitized Markdown attachment. |
+| PATCH | `/api/repositories/:id/findings/:findingId/verify` | JWT + repository manager | Marks a finding in that repository as confirmed or false positive for pilot precision measurement. |
+| GET | `/api/repositories/:id/pilot/precision` | JWT + repository access | Returns confirmed, false-positive, unverified, and precision counts grouped by rule. |
 
 ## Important boundaries
 
@@ -116,6 +118,7 @@ PORT=3000
 - LLM review is disabled by default. When repository owners opt in and `OPENAI_API_KEY` is configured, DiffGuard sends only bounded, redacted added-line context to the Responses API using strict structured output. Invalid output, unavailable OpenAI service, or invalid line locations fail open and cannot block deterministic review or webhook processing.
 - Repository-scoped read operations require either an admin role or an explicit `GithubRepositoryAccess` grant. Material settings, rerun, retention, and evidence actions require admin or a `MANAGER`/`OWNER` repository grant and are written to `AuditLog`.
 - Curated PR evidence export fetches authoritative PR metadata through the backend GitHub App token and returns/downloads sanitized Markdown. It does not export tokens, webhook payloads, full diffs, complete patches, suspected credential values, or private logs.
+- Pilot verification is repository-bound: managers can only verify findings whose review run belongs to the selected repository, and each verification is audited.
 
 ## Repository rule configuration
 

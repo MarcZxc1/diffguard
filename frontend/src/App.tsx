@@ -152,6 +152,9 @@ export default function App() {
       setMetrics(metricData);
       setPilotPrecision(precisionData);
     } catch (err) {
+      setSelected(null);
+      setMetrics(null);
+      setPilotPrecision([]);
       setError(err instanceof Error ? err.message : "Unable to load repository");
     }
   }

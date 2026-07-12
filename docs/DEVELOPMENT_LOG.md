@@ -2,6 +2,12 @@
 
 ## 2026-07-12
 
+### Phase 6 pilot hardening
+
+- Bound pilot finding verification to the repository in the URL so managers cannot verify findings from another repository by ID.
+- Changed evidence export sanitization coverage to import the production sanitizer instead of a duplicated test helper.
+- Cleared stale frontend repository and precision state when repository loading fails.
+
 ### Phase 3-5 review experience, LLM opt-in, dashboard, and operations
 
 - Added additive schema and migration support for Check Run state, LLM review state, repository settings, repository access grants, audit logs, retention, and PR evidence exports.
