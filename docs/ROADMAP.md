@@ -162,7 +162,7 @@ Add an explicit **Save PR Evidence** action for users who want to preserve an im
 - [x] Fetch authoritative PR metadata through the DiffGuard backend using the GitHub App installation token. The Vercel-hosted frontend must never receive GitHub App private keys or installation tokens.
 - [x] Export the PR title, description snapshot, repository, PR number, author, status, relevant dates, source URL, head/merge commit, review/check summary, and user-written thesis relevance.
 - [x] Treat GitHub as the source of truth. Include the source URL and export timestamp so the Markdown record is clearly a snapshot rather than an independent canonical copy.
-- [x] Use a versioned Markdown schema with a filename such as `PR-0042 Add measurement validation.md` and a recommended destination of `11 Testing and QA/PR Reviews/` in the vault.
+- [x] Use a versioned Markdown schema with a filename such as `PR-0042 Add measurement validation.md` and a recommended destination of `11 Testing and QA/PR Reviews/` in the target vault.
 - [x] Link milestone-level PR records from `Phase 1 Implementation Memory.md` instead of copying every commit or review comment into the vault.
 - [x] Keep the initial Vercel flow filesystem-independent: return a sanitized `.md` download that the user places in the vault. Consider an authenticated local Obsidian plugin or companion service only after the download workflow is safe and useful.
 - [x] Authorize every export against the selected installation and repository, record who requested it, and rate-limit the endpoint.
@@ -179,11 +179,11 @@ Exit criteria:
 - [x] Unauthorized repositories, unsafe filenames/content, excessive payloads, and duplicate export requests have tested failure behavior.
 - [x] The exported note renders correctly in Obsidian and preserves a verifiable link to the original GitHub PR.
 
-## Phase 6 — Internal Pilot
+## Phase 6 — Target Pilot
 
-Goal: validate DiffGuard safely on the primary repository before relying on it as a merge gate.
+Goal: validate DiffGuard safely on the target repository before relying on it as a merge gate.
 
-1. Install the GitHub App only on the primary repository with minimum permissions.
+1. Install the GitHub App only on the target repository with minimum permissions.
 2. Run DiffGuard in advisory mode for several representative pull requests.
 3. Record review-run links, confirmed findings, false positives, skipped files, and processing failures.
 4. Tune rule thresholds and repository configuration without hiding real defects.

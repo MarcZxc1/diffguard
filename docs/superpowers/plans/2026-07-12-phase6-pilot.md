@@ -1,8 +1,8 @@
-# Phase 6 — Internal Pilot Implementation Plan
+# Phase 6 — Pilot Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Validate DiffGuard safely on the primary repository by building pilot tracking, finding verification, precision measurement, and controlled check enablement.
+**Goal:** Validate DiffGuard safely on the target repository by building pilot tracking, finding verification, precision measurement, and controlled check enablement.
 
 **Architecture:** Extend the existing backend with pilot-specific models for tracking finding verification (confirmed/false-positive), compute precision metrics per rule, add a pilot dashboard view, and gate required-check enablement on measured precision targets.
 
@@ -574,7 +574,7 @@ Expected: No type errors.
 
 ```bash
 git add -A
-git commit -m "feat(pilot): Phase 6 internal pilot implementation complete"
+git commit -m "feat(pilot): Phase 6 pilot implementation complete"
 ```
 
 ---
@@ -583,7 +583,7 @@ git commit -m "feat(pilot): Phase 6 internal pilot implementation complete"
 
 These are NOT code tasks — they are manual operational steps from the ROADMAP:
 
-1. **Install GitHub App on primary repository** — minimum permissions (pull_requests: read, checks: write, contents: read)
+1. **Install GitHub App on target** — minimum permissions (pull_requests: read, checks: write, contents: read)
 2. **Run advisory mode** — open representative PRs, observe DiffGuard behavior
 3. **Verify findings** — use `PATCH /api/repositories/:id/findings/:findingId/verify` to mark CONFIRMED/FALSE_POSITIVE
 4. **Check precision** — use `GET /api/repositories/:id/pilot/precision` and dashboard view
