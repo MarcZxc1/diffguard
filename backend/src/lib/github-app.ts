@@ -65,6 +65,8 @@ export function readGithubAppPrivateKey(params: {
   }
 }
 
+const nineMinutesInSeconds = 9 * 60;
+
 export function createGithubAppJwt(params: {
   appId: string;
   privateKey: string;
@@ -90,8 +92,6 @@ export function createGithubAppJwt(params: {
     },
   );
 }
-
-const nineMinutesInSeconds = 9 * 60;
 
 export async function createGithubInstallationToken(params: {
   installationId: number | bigint;
