@@ -48,6 +48,15 @@ type EvidencePreview = {
   sha256: string;
 };
 
+type RulePrecision = {
+  ruleId: string;
+  totalFindings: number;
+  confirmedCount: number;
+  falsePositiveCount: number;
+  unverifiedCount: number;
+  precision: number;
+};
+
 function apiPath(path: string) {
   return `${API_URL.replace(/\/?$/, "/")}${path.replace(/^\//, "")}`;
 }
@@ -98,6 +107,7 @@ export default function App() {
   const [prNumber, setPrNumber] = useState("");
   const [thesisRelevance, setThesisRelevance] = useState("");
   const [preview, setPreview] = useState<EvidencePreview | null>(null);
+  const [pilotPrecision, setPilotPrecision] = useState<RulePrecision[]>([]);
 
   useEffect(() => {
     if (token) localStorage.setItem("token", token);
@@ -133,12 +143,14 @@ export default function App() {
     if (!token) return;
     setError("");
     try {
-      const [repository, metricData] = await Promise.all([
+      const [repository, metricData, precisionData] = await Promise.all([
         api<Repository>(`api/repositories/${id}`, token),
         api<Metrics>(`api/repositories/${id}/metrics`, token),
+        api<RulePrecision[]>(`api/repositories/${id}/pilot/precision`, token),
       ]);
       setSelected(repository);
       setMetrics(metricData);
+      setPilotPrecision(precisionData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load repository");
     }
@@ -321,6 +333,38 @@ export default function App() {
                 <div className="rounded border bg-white p-4"><p className="text-xs text-slate-600">GitHub failures</p><p className="text-2xl font-black">{metrics?.githubFailureCount ?? 0}</p></div>
                 <div className="rounded border bg-white p-4"><p className="text-xs text-slate-600">Skipped files</p><p className="text-2xl font-black">{metrics?.skippedFileCount ?? 0}</p></div>
               </div>
+
+              {pilotPrecision.length > 0 && (
+                <div className="rounded border border-slate-200 bg-white p-5">
+                  <h2 className="text-lg font-black">Pilot Precision by Rule</h2>
+                  <table className="mt-4 w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-xs uppercase text-slate-600">
+                      <tr>
+                        <th className="p-3">Rule</th>
+                        <th className="p-3">Total</th>
+                        <th className="p-3">Confirmed</th>
+                        <th className="p-3">False Pos.</th>
+                        <th className="p-3">Unverified</th>
+                        <th className="p-3">Precision</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pilotPrecision.map((rule) => (
+                        <tr key={rule.ruleId} className="border-t">
+                          <td className="p-3 font-mono text-xs">{rule.ruleId}</td>
+                          <td className="p-3">{rule.totalFindings}</td>
+                          <td className="p-3 text-emerald-700">{rule.confirmedCount}</td>
+                          <td className="p-3 text-red-700">{rule.falsePositiveCount}</td>
+                          <td className="p-3 text-slate-500">{rule.unverifiedCount}</td>
+                          <td className="p-3 font-semibold">
+                            {(rule.precision * 100).toFixed(1)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               <div className="rounded border border-slate-200 bg-white p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
