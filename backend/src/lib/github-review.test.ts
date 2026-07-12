@@ -225,6 +225,21 @@ describe("github review client", () => {
     );
   });
 
+  it("labels AI-assisted review comments", () => {
+    const comment = formatRuleFindingComment({
+      fingerprint: "d".repeat(64),
+      title: "Unsafe data flow",
+      evidence: "User input reaches a sink.",
+      explanation: "The dynamic value may be attacker-controlled.",
+      remediation: "Validate input and use a safer API.",
+      severity: "HIGH",
+      confidence: 0.92,
+      source: "LLM",
+      markerSecret: "test-marker-secret",
+    });
+    expect(comment).toContain("**Source:** AI-assisted structured review");
+  });
+
   it("authenticates markers so a predictable fingerprint cannot be forged", () => {
     const fingerprint = "c".repeat(64);
     expect(findingMarker(fingerprint, "first-secret")).not.toBe(

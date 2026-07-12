@@ -2,6 +2,43 @@
 
 ## 2026-07-12
 
+### Phase 7.1 dashboard observability and AI operations
+
+- Added a roadmap section for dashboard observability and AI review operations.
+- Planned near-realtime review-run updates, richer frontend LLM state, sanitized LLM failure reasons, a manager-only OpenAI health-test button, toast results, and a clear boundary that PR comments should be reserved for validated actionable findings rather than AI infrastructure failures.
+- Added bounded polling for the selected repository so active review runs update without manual refresh.
+- Exposed sanitized `llmFailureMessage` values in the repository dashboard and kept OpenAI raw response bodies out of persisted/frontend data.
+- Added `POST /api/repositories/:id/ai/test` for repository managers. The endpoint sends a tiny synthetic structured-output OpenAI request, records an audit log, and returns a safe status for the frontend toast.
+- Added a dashboard **Test AI Review** button with success/error toast feedback.
+- Labeled LLM-origin inline review comments as AI-assisted structured review comments while keeping infrastructure failures out of PR comments.
+
+### Phase 7.1 verification
+
+- `cd backend && bun test src/services/llm-review.service.test.ts`: 4 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd backend && bun test`: 94 passing, 0 failing.
+- `cd frontend && bun run build`: passing.
+- `git diff --check`: passing.
+
+### Phase 7 GitHub OAuth and self-service repository connection
+
+- Added direct GitHub OAuth sign-in with state-cookie validation, verified-email lookup, GitHub identity linking, and backend-issued JWT sessions.
+- Replaced the unsafe callback URL JWT with a short-lived one-time backend exchange code.
+- Added encrypted-at-rest storage for user GitHub OAuth tokens and dropped any earlier plaintext OAuth token column during migration.
+- Added repository discovery through the signed-in user's GitHub App installations and a self-service connect endpoint.
+- Required GitHub `admin` or `maintain` permission before granting DiffGuard `MANAGER` repository access.
+- Updated the frontend with GitHub sign-in, OAuth code exchange, repository discovery, and disabled states for repositories that are not installed or not connectable.
+
+### Phase 7 verification
+
+- `cd backend && bun run db:generate`: passing.
+- `cd backend && bun run db:validate`: passing.
+- `cd backend && bun test`: 91 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd frontend && bun run build`: passing.
+
 ### Phase 6 pilot hardening
 
 - Bound pilot finding verification to the repository in the URL so managers cannot verify findings from another repository by ID.

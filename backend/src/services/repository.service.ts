@@ -66,6 +66,7 @@ export const repositoryService = {
             checkRunConclusion: true,
             checkRunUrl: true,
             llmState: true,
+            llmFailureMessage: true,
             analyzedFileCount: true,
             skippedFileCount: true,
             findingCount: true,

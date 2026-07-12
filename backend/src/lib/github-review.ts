@@ -365,7 +365,11 @@ export function formatRuleFindingComment(finding: {
   remediation: string;
   severity: string;
   confidence: number;
+  source?: string;
   markerSecret: string;
 }): string {
-  return `${findingMarker(finding.fingerprint, finding.markerSecret)}\n**${finding.title}**\n\n**Evidence:** ${finding.evidence}\n\n${finding.explanation}\n\n**Suggested fix:** ${finding.remediation}\n\nSeverity: ${finding.severity.toLowerCase()} - Confidence: ${finding.confidence.toFixed(2)}`;
+  const sourceLabel = finding.source === "LLM"
+    ? "\n\n**Source:** AI-assisted structured review"
+    : "";
+  return `${findingMarker(finding.fingerprint, finding.markerSecret)}\n**${finding.title}**${sourceLabel}\n\n**Evidence:** ${finding.evidence}\n\n${finding.explanation}\n\n**Suggested fix:** ${finding.remediation}\n\nSeverity: ${finding.severity.toLowerCase()} - Confidence: ${finding.confidence.toFixed(2)}`;
 }
