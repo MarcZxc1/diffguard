@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import type { GithubFetch } from "./github-app";
 import {
   assessGithubFileCoverage,
+  createOrUpdateGithubCheckRun,
   fetchGithubPullRequestFiles,
+  fetchGithubPullRequestMetadata,
   findGithubReviewCommentByFingerprint,
   findingMarker,
   formatRuleFindingComment,
@@ -130,6 +132,79 @@ describe("github review client", () => {
       path: "src/app.ts",
       line: 7,
       side: "RIGHT",
+    });
+  });
+
+  it("creates a bounded GitHub Check Run with annotations", async () => {
+    let body = "";
+    const fetchImpl: GithubFetch = async (_input, init) => {
+      body = String(init?.body ?? "");
+      return new Response(JSON.stringify({ id: 123, html_url: "https://github.com/o/r/runs/123" }), { status: 201 });
+    };
+
+    const result = await createOrUpdateGithubCheckRun({
+      repository: "owner/repo",
+      token: "mock-token",
+      headSha: "abc123",
+      status: "completed",
+      conclusion: "neutral",
+      title: "Partial",
+      summary: "summary",
+      annotations: [{
+        path: "src/app.ts",
+        startLine: 3,
+        endLine: 3,
+        annotationLevel: "warning",
+        title: "Issue",
+        message: "Fix it",
+      }],
+      fetchImpl,
+    });
+
+    expect(result.id).toBe(123n);
+    expect(JSON.parse(body)).toMatchObject({
+      name: "DiffGuard",
+      head_sha: "abc123",
+      status: "completed",
+      conclusion: "neutral",
+      output: {
+        title: "Partial",
+        summary: "summary",
+        annotations: [{
+          path: "src/app.ts",
+          start_line: 3,
+          end_line: 3,
+          annotation_level: "warning",
+        }],
+      },
+    });
+  });
+
+  it("fetches authoritative pull-request metadata for evidence exports", async () => {
+    const fetchImpl: GithubFetch = async () => new Response(JSON.stringify({
+      number: 42,
+      title: "Add validation",
+      body: "Description",
+      state: "open",
+      html_url: "https://github.com/owner/repo/pull/42",
+      user: { login: "marc" },
+      created_at: "2026-07-12T00:00:00Z",
+      updated_at: "2026-07-12T01:00:00Z",
+      closed_at: null,
+      merged_at: null,
+      head: { sha: "abc123" },
+      merge_commit_sha: null,
+    }));
+
+    await expect(fetchGithubPullRequestMetadata({
+      repository: "owner/repo",
+      pullRequestNumber: 42,
+      token: "mock-token",
+      fetchImpl,
+    })).resolves.toMatchObject({
+      number: 42,
+      title: "Add validation",
+      head: { sha: "abc123" },
     });
   });
 

@@ -16,6 +16,10 @@ function databaseForClaim(claimCount: number) {
       id: "repository-1",
       fullName: "owner/repo",
       enabled: true,
+      draftPullRequestPolicy: "SKIP",
+      checkRunMode: "ADVISORY",
+      llmReviewEnabled: false,
+      llmModel: "gpt-5.6-sol",
       installation: { githubInstallationId: 123n, enabled: true },
     },
   };

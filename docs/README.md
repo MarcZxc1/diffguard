@@ -7,6 +7,7 @@ Read these documents in this order when joining the project:
 3. [Product and engineering roadmap](ROADMAP.md) defines phased outcomes, risks, and exit criteria.
 4. [Engineering loop](ENGINEERING_LOOP.md) defines the repeatable agentic development cycle.
 5. [Webhook testing](WEBHOOK_TESTING.md) shows how to test the signed GitHub endpoint without leaking secrets.
-6. [Development log](DEVELOPMENT_LOG.md) records completed work and current implementation evidence.
+6. [Operations runbook](OPERATIONS.md) covers migrations, health checks, backups, retention, permissions, LLM opt-in, and evidence export.
+7. [Development log](DEVELOPMENT_LOG.md) records completed work and current implementation evidence.
 
 The reusable Codex skills live in [`../skills`](../skills). Copy them to `~/.codex/skills/` when you want Codex to discover them automatically.

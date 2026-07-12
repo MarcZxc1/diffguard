@@ -2,7 +2,7 @@
 
 ## Purpose
 
-DiffGuard is a focused GitHub pull-request security assistant. GitHub sends a signed `pull_request` webhook, the backend verifies and durably queues it, then a database-backed worker fetches every supported changed-file page, applies versioned deterministic rules, persists findings, and publishes at most three idempotent inline comments. The current frontend is an authentication and backend-connectivity scaffold rather than the final DiffGuard product UI.
+DiffGuard is a focused GitHub pull-request security assistant. GitHub sends a signed `pull_request` webhook, the backend verifies and durably queues it, then a database-backed worker fetches every supported changed-file page, applies versioned deterministic rules, optionally runs a bounded structured LLM review for opted-in repositories, persists findings, and publishes one GitHub Check Run plus at most three idempotent inline comments. The frontend is an operations dashboard for authorized repositories, review runs, settings, metrics, retention, and curated PR evidence export.
 
 ## Stack
 
@@ -33,7 +33,7 @@ diffguard/
 ```text
 React browser -> /api/auth or /api/users -> Express routes -> controllers -> Prisma / Redis
 GitHub -> ngrok -> webhook -> raw-body HMAC -> durable review run -> 202
-Review worker -> installation token -> paginated patches -> rules -> findings -> idempotent comments
+Review worker -> installation token -> Check Run -> paginated patches -> rules -> optional LLM -> findings -> idempotent comments -> Check Run summary
 ```
 
 GitHub signs the **exact request bytes**, not a re-formatted JSON object. That is why the webhook router is mounted before `express.json()`: its `express.raw()` middleware must receive the untouched body before a JSON parser consumes it.
@@ -65,6 +65,8 @@ JWT_SECRET=replace-with-a-long-random-secret
 GITHUB_WEBHOOK_SECRET=replace-with-the-GitHub-webhook-secret
 GITHUB_APP_ID=123456
 GITHUB_APP_PRIVATE_KEY_PATH=/absolute/path/to/github-app.private-key.pem
+OPENAI_API_KEY=optional-for-opted-in-llm-review
+OPENAI_MODEL=gpt-5.6-sol
 PORT=3000
 ```
 
@@ -83,6 +85,14 @@ PORT=3000
 | GET | `/api/webhook/github` | No | Returns 405 because webhooks are POST-only. |
 | GET | `/api/review-runs/:id` | Admin JWT | Returns the durable state, sanitized failure, coverage counts, and persisted findings for one run. |
 | PATCH | `/api/repositories/:id/rules` | Admin JWT | Replaces a repository's validated rule configuration for future review runs. |
+| GET | `/api/repositories` | JWT | Lists repositories visible to the user. Admins see all repositories; other users need a repository access grant. |
+| GET | `/api/repositories/:id` | JWT + repository access | Returns settings and recent review runs for one repository. |
+| PATCH | `/api/repositories/:id/settings` | JWT + repository manager | Updates enabled state, draft policy, Check Run mode, LLM opt-in/model, retention days, or rule configuration. |
+| GET | `/api/repositories/:id/metrics` | JWT + repository access | Returns processing, retry, GitHub failure, suppression, and skipped-coverage metrics. |
+| POST | `/api/repositories/:id/retention/prune` | JWT + repository manager | Deletes review runs older than the repository retention window and audits the action. |
+| POST | `/api/review-runs/:id/rerun` | JWT + repository manager | Clears findings and safely requeues the existing review run. |
+| POST | `/api/repositories/:id/evidence/preview` | JWT + repository manager | Fetches PR metadata with the GitHub App token and returns sanitized Markdown preview JSON. |
+| POST | `/api/repositories/:id/evidence/download` | JWT + repository manager | Records an audited evidence export and returns a sanitized Markdown attachment. |
 
 ## Important boundaries
 
@@ -101,7 +111,11 @@ PORT=3000
 - Network, timeout, rate-limit, and GitHub 5xx failures use at most three attempts with bounded exponential backoff. Authorization, configuration, invalid-response, not-found, and stale-location failures terminate without retry.
 - Failure categories and messages are sanitized. Tokens, patches, credentials, signatures, and upstream response bodies are not persisted.
 - File pagination is bounded at 3,000 returned files. Hitting that bound, missing patches, deleted files, or truncated patches produces `PARTIAL`, never a clean result.
+- Check Runs are created by the worker after it obtains an installation token. They move through queued, in-progress, and completed states and include bounded annotations plus a summary of analyzed files, skipped files, rules, finding counts, LLM state, and limitations.
 - Finding fingerprints include the head revision, rule identity/version, file, and line. Inline comments carry an HMAC-authenticated hidden marker, allowing a retry to find an external comment after a database-write failure without letting contributors forge a predictable marker.
+- LLM review is disabled by default. When repository owners opt in and `OPENAI_API_KEY` is configured, DiffGuard sends only bounded, redacted added-line context to the Responses API using strict structured output. Invalid output, unavailable OpenAI service, or invalid line locations fail open and cannot block deterministic review or webhook processing.
+- Repository-scoped read operations require either an admin role or an explicit `GithubRepositoryAccess` grant. Material settings, rerun, retention, and evidence actions require admin or a `MANAGER`/`OWNER` repository grant and are written to `AuditLog`.
+- Curated PR evidence export fetches authoritative PR metadata through the backend GitHub App token and returns/downloads sanitized Markdown. It does not export tokens, webhook payloads, full diffs, complete patches, suspected credential values, or private logs.
 
 ## Repository rule configuration
 
@@ -133,9 +147,8 @@ Existing local databases created before Phase 1 with `prisma db push` have no Pr
 ## Current known gaps
 
 - Review work runs in a durable database queue but still shares the API process. A separately deployed worker is an operational hardening step.
-- GitHub Check Runs and a coherent review summary begin in Phase 3; current output remains bounded inline comments plus the review-run API.
+- Branch protection remains advisory until pilot precision and reliability evidence is recorded.
 - Deterministic rules are focused heuristics, not proof of a vulnerability. Precision still needs measurement during the advisory pilot.
-- The frontend is a starter authentication screen. It does not yet expose repositories, review runs, findings, or settings.
 
 ## Commands
 

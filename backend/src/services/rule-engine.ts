@@ -66,6 +66,7 @@ export type RuleFinding = Required<
 > & {
   ruleId: string;
   ruleVersion: string;
+  source: "DETERMINISTIC" | "LLM";
   category: "SECURITY" | "POLICY";
   severity: FindingSeverity;
   confidence: number;
@@ -422,6 +423,7 @@ export function scanPullRequest(params: {
         ...candidate,
         ruleId: rule.id,
         ruleVersion: rule.version,
+        source: "DETERMINISTIC",
         category: rule.category,
         severity,
         confidence: candidate.confidence ?? rule.confidence,

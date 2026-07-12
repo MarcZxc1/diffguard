@@ -8,18 +8,22 @@ import {
 } from "../lib/github-app";
 import {
   assessGithubFileCoverage,
+  createOrUpdateGithubCheckRun,
   fetchGithubPullRequestFiles,
   findGithubReviewCommentByFingerprint,
   formatRuleFindingComment,
   postGithubReviewComment,
+  type GithubCheckRunAnnotation,
   type GithubPullRequestFile,
 } from "../lib/github-review";
 import { prisma } from "../lib/prisma";
 import {
   RuleConfigurationError,
+  deterministicRules,
   scanPullRequest,
   type RuleFinding,
 } from "./rule-engine";
+import { runStructuredLlmReview } from "./llm-review.service";
 
 export type ReviewRunJob = {
   id: string;
@@ -29,10 +33,15 @@ export type ReviewRunJob = {
   attemptCount: number;
   maxAttempts: number;
   ruleConfiguration: Prisma.JsonValue;
+  checkRunId?: bigint | null;
   repository: {
     id: string;
     fullName: string;
     enabled: boolean;
+    draftPullRequestPolicy: string;
+    checkRunMode: string;
+    llmReviewEnabled: boolean;
+    llmModel: string;
     installation: {
       githubInstallationId: bigint;
       enabled: boolean;
@@ -120,6 +129,7 @@ async function persistFindings(reviewRunId: string, findings: RuleFinding[]) {
         fingerprint: finding.fingerprint,
         ruleId: finding.ruleId,
         ruleVersion: finding.ruleVersion,
+        source: finding.source,
         category: finding.category,
         severity: finding.severity,
         confidence: finding.confidence,
@@ -137,6 +147,7 @@ async function persistFindings(reviewRunId: string, findings: RuleFinding[]) {
       },
       update: {
         severity: finding.severity,
+        source: finding.source,
         confidence: finding.confidence,
         title: finding.title,
         evidence: finding.evidence,
@@ -147,6 +158,104 @@ async function persistFindings(reviewRunId: string, findings: RuleFinding[]) {
       },
     })
   ));
+}
+
+function summarizeReview(params: {
+  state: "SUCCEEDED" | "PARTIAL" | "FAILED" | "SKIPPED";
+  analyzedFileCount: number;
+  skippedFileCount: number;
+  findings: RuleFinding[];
+  llmState: string;
+  limitation?: string;
+}) {
+  const severityCounts = params.findings.reduce<Record<FindingSeverity, number>>((counts, finding) => {
+    counts[finding.severity] += 1;
+    return counts;
+  }, { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 });
+  const counts = (Object.keys(severityRank) as FindingSeverity[])
+    .filter((severity) => severityCounts[severity] > 0)
+    .sort((left, right) => severityRank[right] - severityRank[left])
+    .map((severity) => `${severity}: ${severityCounts[severity]}`)
+    .join(", ") || "none";
+  const ruleVersions = deterministicRules.map((rule) => `${rule.id}@${rule.version}`).join(", ");
+  return [
+    `State: ${params.state}`,
+    `Analyzed files: ${params.analyzedFileCount}`,
+    `Skipped files: ${params.skippedFileCount}`,
+    `Findings: ${params.findings.length} (${counts})`,
+    `Deterministic rules: ${ruleVersions}`,
+    `LLM review: ${params.llmState}`,
+    params.limitation ??
+      "Limitations: deterministic rules are focused heuristics; branch protection remains advisory until pilot precision is measured.",
+  ].join("\n");
+}
+
+function checkAnnotations(findings: RuleFinding[]): GithubCheckRunAnnotation[] {
+  return findings
+    .filter((finding) => finding.category === "SECURITY" && !finding.suppressed)
+    .sort((left, right) =>
+      severityRank[right.severity] - severityRank[left.severity] ||
+      right.confidence - left.confidence
+    )
+    .slice(0, 50)
+    .map((finding) => ({
+      path: finding.filePath,
+      startLine: finding.lineNumber,
+      endLine: finding.lineNumber,
+      annotationLevel: severityRank[finding.severity] >= severityRank.HIGH ? "failure" : "warning",
+      title: finding.title,
+      message: `${finding.evidence}\n\n${finding.remediation}`,
+    }));
+}
+
+function checkConclusion(params: {
+  state: "SUCCEEDED" | "PARTIAL" | "FAILED" | "SKIPPED";
+  findings: RuleFinding[];
+  mode: string;
+}) {
+  if (params.state === "FAILED") return "failure" as const;
+  if (params.state === "SKIPPED") return "skipped" as const;
+  if (params.state === "PARTIAL") return "neutral" as const;
+  const highConfidence = params.findings.some((finding) =>
+    finding.category === "SECURITY" &&
+    !finding.suppressed &&
+    severityRank[finding.severity] >= severityRank.HIGH &&
+    finding.confidence >= 0.9
+  );
+  return params.mode === "ENFORCING" && highConfidence ? "failure" as const : "success" as const;
+}
+
+async function publishCheckRun(params: {
+  run: ReviewRunJob;
+  token: string;
+  status: "queued" | "in_progress" | "completed";
+  title: string;
+  summary: string;
+  conclusion?: "success" | "neutral" | "failure" | "skipped";
+  annotations?: GithubCheckRunAnnotation[];
+}) {
+  const checkRun = await createOrUpdateGithubCheckRun({
+    repository: params.run.repository.fullName,
+    token: params.token,
+    headSha: params.run.headSha,
+    status: params.status,
+    conclusion: params.conclusion,
+    title: params.title,
+    summary: params.summary,
+    annotations: params.annotations,
+    checkRunId: params.run.checkRunId,
+  });
+  params.run.checkRunId = checkRun.id;
+  await prisma.reviewRun.updateMany({
+    where: { id: params.run.id, attemptCount: params.run.attemptCount },
+    data: {
+      checkRunId: checkRun.id,
+      checkRunUrl: checkRun.url,
+      checkRunStatus: params.status,
+      checkRunConclusion: params.conclusion ?? null,
+      reviewSummary: params.summary,
+    },
+  });
 }
 
 export async function processReviewRun(run: ReviewRunJob) {
@@ -165,13 +274,27 @@ export async function processReviewRun(run: ReviewRunJob) {
     appId: env.GITHUB_APP_ID,
     privateKey,
   });
+  await publishCheckRun({
+    run,
+    token: installationToken.token,
+    status: "queued",
+    title: "DiffGuard queued",
+    summary: "DiffGuard accepted this pull request revision and queued it for analysis.",
+  });
+  await publishCheckRun({
+    run,
+    token: installationToken.token,
+    status: "in_progress",
+    title: "DiffGuard analysis in progress",
+    summary: "DiffGuard is fetching changed files and running configured review rules.",
+  });
   const fetched = await fetchGithubPullRequestFiles({
     repository: run.repository.fullName,
     pullRequestNumber: run.pullRequestNumber,
     token: installationToken.token,
   });
   const analysis = analyzeGithubFiles(fetched);
-  const findings = scanPullRequest({
+  const deterministicFindings = scanPullRequest({
     context: {
       headSha: run.headSha,
       files: fetched.files.map((file) => ({
@@ -182,6 +305,23 @@ export async function processReviewRun(run: ReviewRunJob) {
     },
     configuration: run.ruleConfiguration,
   });
+  const llmReview = await runStructuredLlmReview({
+    enabled: run.repository.llmReviewEnabled,
+    model: run.repository.llmModel,
+    headSha: run.headSha,
+    changedLines: analysis.changedLines,
+    deterministicFindings,
+  });
+  const findings = [
+    ...deterministicFindings,
+    ...llmReview.findings.filter((finding) =>
+      !deterministicFindings.some((existing) =>
+        existing.filePath === finding.filePath &&
+        existing.lineNumber === finding.lineNumber &&
+        existing.title.toLowerCase() === finding.title.toLowerCase()
+      )
+    ),
+  ];
   await assertReviewLease(run);
   const records = await persistFindings(run.id, findings);
   const publishable = records
@@ -237,6 +377,31 @@ export async function processReviewRun(run: ReviewRunJob) {
   }
 
   const completedAt = new Date();
+  const finalState = analysis.partial ? "PARTIAL" : "SUCCEEDED";
+  const summary = summarizeReview({
+    state: finalState,
+    analyzedFileCount: analysis.analyzedFileCount,
+    skippedFileCount: analysis.skippedFileCount,
+    findings,
+    llmState: llmReview.state,
+    limitation: analysis.partial
+      ? "Limitations: some files were skipped or patch pagination was incomplete, so this is not complete coverage."
+      : undefined,
+  });
+  await assertReviewLease(run);
+  await publishCheckRun({
+    run,
+    token: installationToken.token,
+    status: "completed",
+    title: finalState === "PARTIAL" ? "DiffGuard completed with partial coverage" : "DiffGuard completed",
+    summary,
+    conclusion: checkConclusion({
+      state: finalState,
+      findings,
+      mode: run.repository.checkRunMode,
+    }),
+    annotations: checkAnnotations(findings),
+  });
   await prisma.$transaction(async (transaction) => {
     const completed = await transaction.reviewRun.updateMany({
       where: {
@@ -245,10 +410,13 @@ export async function processReviewRun(run: ReviewRunJob) {
         attemptCount: run.attemptCount,
       },
       data: {
-        state: analysis.partial ? "PARTIAL" : "SUCCEEDED",
+        state: finalState,
         retryable: false,
         failureCategory: null,
         failureMessage: null,
+        reviewSummary: summary,
+        llmState: llmReview.state,
+        llmFailureMessage: llmReview.failureMessage ?? null,
         completedAt,
         analyzedFileCount: analysis.analyzedFileCount,
         skippedFileCount: analysis.skippedFileCount,
@@ -355,6 +523,36 @@ export async function recordReviewFailure(run: ReviewRunJob, error: unknown) {
     error,
     now,
   });
+  if (!transition.shouldRetry && env.GITHUB_APP_ID && run.checkRunId) {
+    try {
+      const privateKey = readGithubAppPrivateKey({
+        privateKey: env.GITHUB_APP_PRIVATE_KEY,
+        privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH,
+      });
+      const installationToken = await createGithubInstallationToken({
+        installationId: run.repository.installation.githubInstallationId,
+        appId: env.GITHUB_APP_ID,
+        privateKey,
+      });
+      await publishCheckRun({
+        run,
+        token: installationToken.token,
+        status: "completed",
+        title: "DiffGuard failed",
+        summary: summarizeReview({
+          state: "FAILED",
+          analyzedFileCount: 0,
+          skippedFileCount: 0,
+          findings: [],
+          llmState: "SKIPPED",
+          limitation: `Failure: ${transition.message}`,
+        }),
+        conclusion: "failure",
+      });
+    } catch {
+      // Failure reporting is best effort; the durable sanitized failure below is authoritative.
+    }
+  }
   const recorded = await prisma.$transaction(async (transaction) => {
     const updated = await transaction.reviewRun.updateMany({
       where: {

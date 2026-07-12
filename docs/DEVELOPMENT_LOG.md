@@ -2,6 +2,29 @@
 
 ## 2026-07-12
 
+### Phase 3-5 review experience, LLM opt-in, dashboard, and operations
+
+- Added additive schema and migration support for Check Run state, LLM review state, repository settings, repository access grants, audit logs, retention, and PR evidence exports.
+- Added GitHub Check Run create/update support with queued, in-progress, success, partial, skipped, and failed summaries plus bounded annotations.
+- Added safe handling for `pull_request.reopened` and `pull_request.ready_for_review`, draft PR skip policy, and manual rerun of existing review runs.
+- Added optional structured LLM review using the OpenAI Responses API, strict JSON schema output, Zod validation, bounded/redacted added-line context, invalid-location rejection, deterministic fingerprints, dedupe, and fail-open behavior.
+- Added repository-scoped APIs for authorized repository listing/detail, settings, metrics, retention pruning, reruns, and curated PR evidence preview/download.
+- Replaced the starter frontend with an operations dashboard for repositories, review states, metrics, settings, reruns, and sanitized Markdown evidence export.
+- Added `docs/OPERATIONS.md` with migrations, health checks, backups, retention, GitHub App permissions, LLM opt-in, and evidence export guidance.
+
+### Phase 3-5 verification
+
+- `cd backend && bun test`: 71 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd backend && bun run db:validate`: passing.
+- `cd frontend && bun run build`: passing.
+
+### Remaining exit evidence
+
+- Required branch protection remains disabled until the advisory pilot proves reliability and precision.
+- Phase 6 still needs real-repository pilot evidence, confirmed findings, false-positive measurement, and selected exported PR records.
+
 ### Phase 1 reliable review processing
 
 - Added versioned persistence for GitHub installations/repositories, delivery and review-run lifecycle, attempts, sanitized failures, coverage metrics, findings, suppressions, and comment publication.

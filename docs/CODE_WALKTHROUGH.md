@@ -13,8 +13,9 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/tsconfig.json`: strict TypeScript settings. `noEmit` makes this configuration a verifier rather than a compiler.
 - `backend/.env`: local secrets and connection strings. It is deliberately not documented with real values and must not be committed.
 - `backend/prisma.config.ts`: tells Prisma where the schema is and which connection URL to use for CLI commands.
-- `backend/prisma/schema.prisma`: defines users plus durable GitHub installations, repositories, deliveries, review runs, findings, state/failure enums, repository rule configuration, retry scheduling, and idempotent fingerprint constraints.
+- `backend/prisma/schema.prisma`: defines users plus durable GitHub installations, repositories, access grants, deliveries, review runs, findings, Check Run state, LLM state, audit logs, evidence exports, state/failure enums, repository rule configuration, retry scheduling, and idempotent fingerprint constraints.
 - `backend/prisma/migrations/20260712090000_phase_1_2_foundation/migration.sql`: creates the complete migration-managed schema and additively extends a Phase 0 delivery table when present.
+- `backend/prisma/migrations/20260712110000_phase_3_5_review_experience/migration.sql`: additively adds Check Run, LLM, authorization, audit, retention, and PR evidence export state.
 - `backend/docker-compose.yml`: starts Postgres on host port `54519` and Redis on host port `63707`. The services retain data in named Docker volumes.
 
 ## Backend entry point and environment
@@ -35,9 +36,9 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/src/routes/health.routes.ts`: exposes `GET /api/health`; `SELECT 1` is the smallest useful database probe.
 - `backend/src/routes/auth.routes.ts`: maps registration and login URLs to controller functions.
 - `backend/src/routes/user.routes.ts`: protects both user endpoints with JWT authentication and an `ADMIN` role check before the controller runs.
-- `backend/src/routes/github-webhooks.routes.ts`: verifies the exact raw-body HMAC, validates the supported pull-request payload with Zod, and delegates one atomic durable enqueue. It returns `202` without authenticating to GitHub or scanning patches. Duplicates report the existing run state rather than pretending a failed run succeeded.
-- `backend/src/routes/review-run.routes.ts`: exposes one sanitized review run and its persisted findings to authenticated admins.
-- `backend/src/routes/repository.routes.ts`: lets authenticated admins replace a repository's strict rule configuration for future runs.
+- `backend/src/routes/github-webhooks.routes.ts`: verifies the exact raw-body HMAC, validates the supported pull-request payload with Zod, handles opened/synchronize/reopened/ready-for-review actions, and delegates one atomic durable enqueue or configured draft skip. It returns `202` without authenticating to GitHub or scanning patches. Duplicates report the existing run state rather than pretending a failed run succeeded.
+- `backend/src/routes/review-run.routes.ts`: exposes one sanitized review run and manual rerun behavior to users authorized for the repository.
+- `backend/src/routes/repository.routes.ts`: exposes authorized repository listing, detail, settings, metrics, retention prune, rule configuration, and PR evidence export endpoints.
 
 ## Controllers, services, and middleware
 
@@ -47,9 +48,12 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/src/services/user.service.test.ts`: verifies that the admin-supplied password is transformed before persistence.
 - `backend/src/services/github-webhook-delivery.service.ts`: transactionally upserts installation/repository identity and creates a unique delivery plus queued review run. It respects enabled state, returns the current state for duplicates, and atomically requeues a recorded retryable failure when attempts remain.
 - `backend/src/services/review-worker.ts`: polls the durable queue, atomically claims one due run, heartbeats the attempt, recovers abandoned work, and delegates processing. Attempt-count guards prevent an expired worker from overwriting a newer claim.
-- `backend/src/services/review-processor.ts`: exchanges the installation token, fetches/assesses patches, runs the configuration snapshot, persists findings, deduplicates bounded comments, completes clean/partial runs, and records bounded retry or sanitized terminal failure state.
+- `backend/src/services/review-processor.ts`: exchanges the installation token, publishes Check Run lifecycle state, fetches/assesses patches, runs the configuration snapshot, optionally runs fail-open structured LLM review, persists findings, deduplicates bounded comments, completes clean/partial runs, and records bounded retry or sanitized terminal failure state.
+- `backend/src/services/llm-review.service.ts`: builds bounded redacted added-line context, calls the OpenAI Responses API only for opted-in repositories with credentials configured, validates strict structured output with Zod, rejects invalid locations, and fails open.
 - `backend/src/services/review-run.service.ts`: selects the public operational view of a review run and converts GitHub bigint IDs to JSON-safe strings.
-- `backend/src/services/repository.service.ts`: validates and persists the repository rule configuration used by future queued runs.
+- `backend/src/services/repository.service.ts`: validates and persists repository settings, rule configuration, metrics, manual reruns, retention pruning, and repository dashboard projections.
+- `backend/src/services/repository-authorization.service.ts`: centralizes repository access checks and audit-log recording.
+- `backend/src/services/evidence-export.service.ts`: fetches authoritative PR metadata with the GitHub App token and produces sanitized Markdown previews/downloads without exporting patches, secrets, or private logs.
 - `backend/src/middlewares/auth.middleware.ts`: reads `Authorization: Bearer <JWT>`, verifies it, and saves the token subject and role on the request. `requireRole` runs after it and rejects unsuitable roles.
 - `backend/src/middlewares/error.middleware.ts`: turns known `HttpError` instances into intentional client responses. Unknown errors are logged only on the server and return a generic 500 response.
 
@@ -59,7 +63,7 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/src/lib/github-webhook.test.ts`: creates a signature using the same crypto primitive and verifies acceptance/rejection cases. These tests protect the raw signature contract.
 - `backend/src/lib/github-app.test.ts`: verifies App JWT claims/signing, installation-token request headers, and failed or malformed GitHub responses using a mocked fetch.
 - `backend/src/lib/diff-parser.ts`: maps unified patch hunks to added, removed, and context lines with new-file line numbers.
-- `backend/src/lib/github-review.ts`: follows bounded file/comment pagination, validates and size-bounds GitHub responses, detects incomplete patch coverage, finds HMAC-authenticated fingerprint markers, and posts right-side review comments with request timeouts.
+- `backend/src/lib/github-review.ts`: follows bounded file/comment pagination, validates and size-bounds GitHub responses, detects incomplete patch coverage, finds HMAC-authenticated fingerprint markers, posts right-side review comments, creates/updates Check Runs, fetches PR metadata for evidence export, and uses request timeouts.
 - `backend/src/services/rule-engine.ts`: defines the versioned deterministic rule contract, configuration schema, path/severity/suppression controls, stable fingerprints, seven security rule families, and one separate repository-policy rule.
 - `backend/src/lib/github-review.test.ts`: verifies multi-page files, pagination limits, patch coverage, external comment deduplication, publication payloads, and markers with mocked HTTP.
 - `backend/src/services/github-webhook-delivery.service.test.ts`: verifies atomic enqueue ordering, disabled repositories, and retrying a recorded failure.
@@ -75,7 +79,7 @@ This guide explains the role of every maintained source file. Read the source be
 - `frontend/tsconfig*.json`: separates browser TypeScript settings from Vite/Node configuration.
 - `frontend/index.html`: Vite's HTML shell; `#root` is where React renders.
 - `frontend/src/main.tsx`: creates the React root and wraps the app in `StrictMode`, which helps surface unsafe development behavior.
-- `frontend/src/App.tsx`: holds the temporary login/register form, stores the JWT in `localStorage`, calls the health endpoint, and tries the admin-only users endpoint. Its `any[]` user state and string-based status checks are starter-code compromises to replace with typed API models.
+- `frontend/src/App.tsx`: stores the JWT in `localStorage`, renders login/register, lists authorized repositories, shows review-run states and metrics, updates repository settings, triggers reruns, and previews/downloads sanitized PR evidence Markdown.
 - `frontend/src/index.css`: imports Tailwind CSS.
 - `frontend/src/App.css`: leftover Vite starter styles. `App.tsx` uses Tailwind utility classes instead, so remove this file and import only when the final UI no longer needs it.
 - `frontend/src/assets/*` and `frontend/public/*`: starter images/icons; preserve only assets used by the final product.
@@ -92,5 +96,5 @@ For `POST /api/webhook/github`:
 
 ```text
 ngrok -> raw router -> HMAC -> Zod payload -> transactionally queued delivery/run -> 202
-review worker -> atomic claim -> GitHub pages -> coverage -> rule snapshot -> findings/comments -> terminal state
+review worker -> atomic claim -> Check Run queued/in-progress -> GitHub pages -> coverage -> rule snapshot -> optional LLM -> findings/comments -> Check Run summary -> terminal state
 ```
