@@ -99,3 +99,33 @@ export async function pruneRepositoryRetention(req: AuthRequest, res: Response) 
   if (!result) throw new HttpError(404, "Repository not found");
   res.json(result);
 }
+
+export async function verifyFindingController(req: AuthRequest, res: Response) {
+  const params = z.object({
+    id: z.string().uuid(),
+    findingId: z.string().uuid(),
+  }).safeParse(req.params);
+  if (!params.success) throw new HttpError(400, "Invalid IDs");
+  await requireRepositoryManager(req, params.data.id);
+  const { verifyFinding } = await import("../services/pilot.service");
+  const result = await verifyFinding.execute(
+    params.data.findingId,
+    req.body,
+    req.user!,
+  );
+  if (!result) throw new HttpError(404, "Finding not found");
+  res.json(result);
+}
+
+export async function getPilotPrecisionController(
+  req: AuthRequest,
+  res: Response,
+) {
+  const params = repositoryParamsSchema.safeParse(req.params);
+  if (!params.success) throw new HttpError(400, "Invalid repository ID");
+  await requireRepositoryAccess(req, params.data.id);
+  const { getPilotPrecisionByRule } = await import(
+    "../services/pilot.service"
+  );
+  res.json(await getPilotPrecisionByRule(params.data.id));
+}

@@ -6,6 +6,8 @@ import {
   pruneRepositoryRetention,
   updateRepositoryRules,
   updateRepositorySettings,
+  verifyFindingController,
+  getPilotPrecisionController,
 } from "../controllers/repository.controller";
 import {
   downloadPullRequestEvidence,
@@ -28,3 +30,5 @@ repositoryRouter.patch(
   requireRole(["ADMIN"]),
   updateRepositoryRules,
 );
+repositoryRouter.patch("/:id/findings/:findingId/verify", authMiddleware, verifyFindingController);
+repositoryRouter.get("/:id/pilot/precision", authMiddleware, getPilotPrecisionController);
