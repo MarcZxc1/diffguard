@@ -194,6 +194,12 @@ Goal: validate DiffGuard safely on the SNUHI repository before relying on it as 
 
 Pilot evidence belongs primarily in GitHub. Thesis documentation should link important PRs and summarize outcomes rather than duplicate every commit or comment.
 
+## Phase 7 — Style and Maintainability Policies
+
+Future work may add advisory policy checks for naming conventions and other maintainability standards, such as camelCase for multi-word identifiers, PascalCase for classes, and repository-specific file or folder naming conventions.
+
+These checks should remain separate from security findings and should stay advisory until the team is satisfied with precision and usefulness on real pull requests.
+
 ## Cross-Cutting Definition of Done
 
 A roadmap item is complete only when:
