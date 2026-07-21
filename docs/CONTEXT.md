@@ -77,6 +77,8 @@ OPENAI_MODEL=gpt-5.6-sol
 PORT=3000
 ```
 
+`FRONTEND_URL` is also the backend's exact credentialed CORS origin and OAuth callback destination. Production must set it to the deployed frontend origin rather than relying on the local default.
+
 `VITE_API_URL` is read by the frontend. It should include a trailing slash, for example `VITE_API_URL=http://localhost:3000/` in `frontend/.env`.
 
 ## Current API surface
@@ -86,20 +88,21 @@ PORT=3000
 | GET | `/api/health` | No | Checks whether Postgres accepts `SELECT 1`. |
 | POST | `/api/auth/register` | No | Creates a user and returns a 15-minute JWT. |
 | POST | `/api/auth/login` | No | Verifies credentials and returns a JWT. |
-| GET | `/api/auth/github` | No | Starts GitHub OAuth with an HTTP-only state cookie. |
-| GET | `/api/auth/github/callback` | GitHub redirect + state cookie | Exchanges the GitHub code, links or creates the user, stores the user OAuth token encrypted, and redirects the browser with a short-lived one-time exchange code. |
+| GET | `/api/auth/github` | No | Starts GitHub OAuth with HTTP-only state and PKCE-verifier cookies. |
+| POST | `/api/auth/github/link` | JWT | Starts the same protected flow with a signed, short-lived intent to link or reconnect the authenticated DiffGuard user. |
+| GET | `/api/auth/github/callback` | GitHub redirect + state/PKCE cookies | Exchanges the GitHub code, links or creates the user, stores access and optional refresh tokens encrypted with expiry metadata, and redirects the browser with a short-lived one-time exchange code. |
 | POST | `/api/auth/github/exchange` | One-time code | Consumes the one-time OAuth exchange code and returns the backend JWT. |
 | GET | `/api/users` | Admin JWT | Returns cached user records. |
 | POST | `/api/users` | Admin JWT | Creates a user from `email`, optional `name`, and a password of at least eight characters. Passwords are hashed and omitted from responses. |
 | POST | `/api/webhook/github` | GitHub HMAC | Atomically queues supported `opened` and `synchronize` deliveries and returns the durable review-run ID. |
 | GET | `/api/webhook/github` | No | Returns 405 because webhooks are POST-only. |
-| GET | `/api/review-runs/:id` | Admin JWT | Returns the durable state, sanitized failure, coverage counts, and persisted findings for one run. |
+| GET | `/api/review-runs/:id` | JWT + repository manager | Returns the durable state, sanitized failure, coverage counts, and persisted findings for one run. |
 | PATCH | `/api/repositories/:id/rules` | Admin JWT | Replaces a repository's validated rule configuration for future review runs. |
 | GET | `/api/repositories/github/discover` | JWT + connected GitHub account | Lists GitHub App installations and repositories visible to the signed-in GitHub user, including whether DiffGuard is installed and whether the user has admin/maintain permission to connect it. |
 | POST | `/api/repositories/github/connect` | JWT + GitHub admin/maintain permission | Grants the signed-in user DiffGuard manager access to an installed repository after verifying GitHub permissions. |
 | GET | `/api/repositories` | JWT | Lists repositories visible to the user. Admins see all repositories; other users need a repository access grant. |
 | GET | `/api/repositories/:id` | JWT + repository access | Returns settings and recent review runs for one repository. |
-| PATCH | `/api/repositories/:id/settings` | JWT + repository manager | Updates enabled state, draft policy, Check Run mode, LLM opt-in/model, retention days, or rule configuration. |
+| PATCH | `/api/repositories/:id/settings` | JWT + repository manager | Updates enabled state, draft policy, Check Run mode, LLM opt-in/model, retention days, or rule configuration. An enforcing-mode transition requires sufficient pilot evidence. |
 | GET | `/api/repositories/:id/metrics` | JWT + repository access | Returns processing, retry, GitHub failure, suppression, and skipped-coverage metrics. |
 | POST | `/api/repositories/:id/ai/test` | JWT + repository manager | Sends a tiny synthetic OpenAI structured-output health request for the repository model and returns a sanitized status for dashboard toast feedback. |
 | POST | `/api/repositories/:id/retention/prune` | JWT + repository manager | Deletes review runs older than the repository retention window and audits the action. |
@@ -107,7 +110,8 @@ PORT=3000
 | POST | `/api/repositories/:id/evidence/preview` | JWT + repository manager | Fetches PR metadata with the GitHub App token and returns sanitized Markdown preview JSON. |
 | POST | `/api/repositories/:id/evidence/download` | JWT + repository manager | Records an audited evidence export and returns a sanitized Markdown attachment. |
 | PATCH | `/api/repositories/:id/findings/:findingId/verify` | JWT + repository manager | Marks a finding in that repository as confirmed or false positive for pilot precision measurement. |
-| GET | `/api/repositories/:id/pilot/precision` | JWT + repository access | Returns confirmed, false-positive, unverified, and precision counts grouped by rule. |
+| GET | `/api/repositories/:id/pilot/precision` | JWT + repository access | Returns confirmed, false-positive, unverified, and precision counts grouped by deterministic security rule version. |
+| GET | `/api/repositories/:id/pilot/status` | JWT + repository access | Returns pilot targets, run reliability, readiness blockers, and rule versions eligible for enforcement. |
 
 ## Important boundaries
 
@@ -130,9 +134,10 @@ PORT=3000
 - Finding fingerprints include the head revision, rule identity/version, file, and line. Inline comments carry an HMAC-authenticated hidden marker, allowing a retry to find an external comment after a database-write failure without letting contributors forge a predictable marker.
 - LLM review is disabled by default. When repository owners opt in and `OPENAI_API_KEY` is configured, DiffGuard sends only bounded, redacted added-line context to the Responses API using strict structured output. Invalid output, unavailable OpenAI service, or invalid line locations fail open and cannot block deterministic review or webhook processing. Maintainers can test the configured OpenAI path from the dashboard; the health check sends no repository code and returns only sanitized status-level messages.
 - Repository-scoped read operations require either an admin role or an explicit `GithubRepositoryAccess` grant. Material settings, rerun, retention, and evidence actions require admin or a `MANAGER`/`OWNER` repository grant and are written to `AuditLog`.
-- GitHub OAuth is used only for user sign-in, repository discovery, and self-service repository connection. The browser never receives a GitHub OAuth token, and the callback does not put the backend JWT in the URL. User OAuth tokens are encrypted at rest and only `admin` or `maintain` GitHub repository permissions can create a DiffGuard manager grant.
+- GitHub OAuth is used only for user sign-in, repository discovery, and self-service repository connection. The browser never receives a GitHub OAuth token, and the callback does not put the backend JWT in the URL. The authorization-code flow uses state and S256 PKCE. Access and refresh tokens are encrypted separately at rest; expiring user tokens rotate shortly before expiry. A rejected refresh or GitHub API `401` clears only the matching stored grant and returns a typed re-authentication response. Only `admin` or `maintain` GitHub repository permissions can create a DiffGuard manager grant.
 - Curated PR evidence export fetches authoritative PR metadata through the backend GitHub App token and returns/downloads sanitized Markdown. It does not export tokens, webhook payloads, full diffs, complete patches, suspected credential values, or private logs.
 - Pilot verification is repository-bound: managers can only verify findings whose review run belongs to the selected repository, and each verification is audited.
+- Pilot enforcement is fail-safe: advisory-to-enforcing transitions require recorded reliability and precision evidence, and only the qualifying deterministic rule versions can fail a security Check Run. LLM findings remain advisory.
 
 ## Repository rule configuration
 

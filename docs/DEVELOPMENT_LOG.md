@@ -1,5 +1,57 @@
 # Development Log
 
+## 2026-07-21
+
+### Phase 7.1 completion and Phase 8 maintainability policies
+
+- Tightened dashboard polling to run only while the selected repository has queued or processing reviews, with visible live, updating, last-updated, and stale states.
+- Kept sanitized LLM failure details in the dashboard and changed Check Run coverage wording to state explicitly that AI failures fail open while deterministic review completes.
+- Added a per-manager/repository cooldown to the synthetic **Test AI Review** request and made toast updates accessible to assistive technology.
+- Added opt-in `policy.identifier-naming` and `policy.repository-path-naming` rules with strict repository configuration and dashboard controls.
+- Kept all maintainability feedback advisory, bounded, excluded from security comments and pilot precision, and unable to fail enforcing Check Runs.
+
+### Phase 7.1 and Phase 8 verification
+
+- `cd backend && bun test`: 114 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd backend && bun run db:validate`: passing.
+- `cd frontend && bun run build`: passing.
+- `cd frontend && bun run lint`: passing with the three pre-existing `react-hooks/exhaustive-deps` warnings in `App.tsx`.
+- `git diff --check`: passing.
+
+### Phase 7 OAuth token lifecycle hardening
+
+- Added S256 PKCE to the existing state-protected GitHub OAuth authorization-code flow.
+- Added optional access-token expiry, encrypted refresh-token, refresh expiry, and invalidation metadata without breaking existing non-expiring grants.
+- Added automatic one-minute-ahead refresh with atomic token-pair rotation and an optimistic race guard.
+- Preserved stored grants during transient GitHub and rate-limit failures, while rejected/expired/revoked grants are cleared without exposing upstream bodies.
+- Added typed `GITHUB_REAUTH_REQUIRED` responses and a dashboard **Reconnect GitHub** banner.
+- Added an authenticated GitHub link/reconnect start endpoint so password-fallback users can complete the previously documented account-linking flow without putting a JWT in a URL.
+- Changed credentialed CORS to use the configured `FRONTEND_URL` instead of a hardcoded development origin.
+
+### Phase 7 token-lifecycle verification
+
+- `cd backend && bun test`: 109 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd backend && bun run db:validate`: passing.
+- `cd frontend && bun run build`: passing.
+- `git diff --check`: passing.
+
+### Phase 6 advisory pilot workflow
+
+- Added an always-visible pilot-readiness panel with distinct reviewed-PR progress, full-coverage reliability, rule-version precision, and explicit blockers.
+- Added dashboard review-run inspection and manager controls for audited confirmed/false-positive finding decisions with optional notes.
+- Restricted pilot precision to unsuppressed deterministic security findings and separated evidence by rule version.
+- Gated the `ADVISORY` to `ENFORCING` transition on five distinct reviewed PRs, 95% successful full-coverage runs, and at least one rule version with ten verified findings at 90% precision.
+- Restricted enforcing Check Run failures to high-confidence findings from eligible deterministic rule versions; LLM findings remain advisory.
+- Added `docs/PILOT.md` for target installation, evidence collection, privacy review, exports, and deliberate branch-protection enablement.
+
+### Remaining Phase 6 evidence
+
+- Run the workflow on the real target repository, classify genuine findings, review privacy implications, export selected merged PRs, and decide whether GitHub branch protection should require DiffGuard.
+
 ## 2026-07-12
 
 ### Phase 7.1 dashboard observability and AI operations

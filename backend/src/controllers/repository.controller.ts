@@ -8,7 +8,12 @@ import {
 } from "../lib/github-app";
 import { HttpError } from "../middlewares/error.middleware";
 import { RuleConfigurationError } from "../services/rule-engine";
-import { decryptOAuthToken } from "../services/oauth-token.service";
+import {
+  getGithubOAuthAccessToken,
+  GithubOAuthUnavailableError,
+  GithubReauthenticationRequiredError,
+  invalidateGithubOAuthGrant,
+} from "../services/oauth-token.service";
 import {
   canConnectRepository,
   githubPermissionLabel,
@@ -19,7 +24,14 @@ import {
   recordAuditLog,
 } from "../services/repository-authorization.service";
 import { repositoryService } from "../services/repository.service";
-import { testOpenAiReviewConfiguration } from "../services/llm-review.service";
+import {
+  consumeAiHealthCheckRateLimit,
+  testOpenAiReviewConfiguration,
+} from "../services/llm-review.service";
+import {
+  PilotReadinessError,
+  PilotVerificationInputError,
+} from "../services/pilot.service";
 import type { AuthRequest } from "../middlewares/auth.middleware";
 
 const repositoryParamsSchema = z.object({ id: z.string().uuid() }).strict();
@@ -58,22 +70,46 @@ function githubHeaders(accessToken: string) {
   };
 }
 
-function decryptConnectedGithubToken(
-  user: { githubAccessTokenCiphertext: string | null } | null,
-) {
-  if (!user?.githubAccessTokenCiphertext) {
-    throw new HttpError(400, "User has not connected their GitHub account");
-  }
+type GithubUserCredential = Awaited<ReturnType<typeof getGithubOAuthAccessToken>> & {
+  userId: string;
+};
+
+function githubReauthenticationError() {
+  return new HttpError(
+    401,
+    "GitHub authorization expired or was revoked. Sign in with GitHub again.",
+    { code: "GITHUB_REAUTH_REQUIRED" },
+  );
+}
+
+async function connectedGithubCredential(userId: string): Promise<GithubUserCredential> {
   try {
-    return decryptOAuthToken(user.githubAccessTokenCiphertext);
-  } catch {
-    throw new HttpError(401, "GitHub account connection is invalid. Please sign in with GitHub again.");
+    return { userId, ...await getGithubOAuthAccessToken(userId) };
+  } catch (error) {
+    if (error instanceof GithubReauthenticationRequiredError) {
+      throw githubReauthenticationError();
+    }
+    if (error instanceof GithubOAuthUnavailableError) {
+      throw new HttpError(503, error.message);
+    }
+    throw error;
   }
 }
 
-function assertGithubApiResponse(response: globalThis.Response, failureMessage: string) {
-  if (response.status === 401 || response.status === 403) {
-    throw new HttpError(response.status, "GitHub authorization failed. Please sign in with GitHub again.");
+async function assertGithubApiResponse(
+  response: globalThis.Response,
+  failureMessage: string,
+  credential: GithubUserCredential,
+) {
+  if (response.status === 401) {
+    await invalidateGithubOAuthGrant(
+      credential.userId,
+      credential.accessTokenCiphertext,
+    );
+    throw githubReauthenticationError();
+  }
+  if (response.status === 403) {
+    throw new HttpError(403, "GitHub denied access to this resource");
   }
   if (!response.ok) {
     throw new HttpError(502, failureMessage);
@@ -158,7 +194,7 @@ async function syncInstalledGithubAppRepository(repo: {
   });
 }
 
-async function fetchAccessibleGithubRepositories(accessToken: string) {
+async function fetchAccessibleGithubRepositories(credential: GithubUserCredential) {
   const repositories: Array<{
     githubRepositoryId: number;
     fullName: string;
@@ -173,10 +209,14 @@ async function fetchAccessibleGithubRepositories(accessToken: string) {
     url.searchParams.set("page", String(page));
 
     const reposRes = await fetch(url, {
-      headers: githubHeaders(accessToken),
+      headers: githubHeaders(credential.accessToken),
     });
 
-    assertGithubApiResponse(reposRes, "Failed to fetch GitHub repositories");
+    await assertGithubApiResponse(
+      reposRes,
+      "Failed to fetch GitHub repositories",
+      credential,
+    );
     const reposData = githubRepositoryListSchema.safeParse(await reposRes.json());
     if (!reposData.success) {
       throw new HttpError(502, "GitHub returned invalid repository data");
@@ -260,6 +300,9 @@ export async function updateRepositorySettings(req: AuthRequest, res: Response) 
     if (!repository) throw new HttpError(404, "Repository not found");
     res.json(repository);
   } catch (error) {
+    if (error instanceof PilotReadinessError) {
+      throw new HttpError(409, error.message, { blockers: error.blockers });
+    }
     if (error instanceof RuleConfigurationError || error instanceof Error && error.message.includes("settings")) {
       throw new HttpError(400, error.message);
     }
@@ -277,6 +320,15 @@ export async function testRepositoryAiReviewController(req: AuthRequest, res: Re
     select: { id: true, llmModel: true },
   });
   if (!repository) throw new HttpError(404, "Repository not found");
+
+  const retryAfterMilliseconds = consumeAiHealthCheckRateLimit(
+    `${req.user!.id}:${repository.id}`,
+  );
+  if (retryAfterMilliseconds > 0) {
+    throw new HttpError(429, "AI review health checks are limited to one every 30 seconds", {
+      retryAfterSeconds: Math.ceil(retryAfterMilliseconds / 1_000),
+    });
+  }
 
   const result = await testOpenAiReviewConfiguration({
     model: repository.llmModel,
@@ -318,12 +370,20 @@ export async function verifyFindingController(req: AuthRequest, res: Response) {
   if (!params.success) throw new HttpError(400, "Invalid IDs");
   await requireRepositoryManager(req, params.data.id);
   const { verifyFinding } = await import("../services/pilot.service");
-  const result = await verifyFinding.execute(
-    params.data.id,
-    params.data.findingId,
-    req.body,
-    req.user!,
-  );
+  let result;
+  try {
+    result = await verifyFinding.execute(
+      params.data.id,
+      params.data.findingId,
+      req.body,
+      req.user!,
+    );
+  } catch (error) {
+    if (error instanceof PilotVerificationInputError) {
+      throw new HttpError(400, error.message);
+    }
+    throw error;
+  }
   if (!result) throw new HttpError(404, "Finding not found");
   res.json(result);
 }
@@ -341,13 +401,22 @@ export async function getPilotPrecisionController(
   res.json(await getPilotPrecisionByRule(params.data.id));
 }
 
+export async function getPilotStatusController(
+  req: AuthRequest,
+  res: Response,
+) {
+  const params = repositoryParamsSchema.safeParse(req.params);
+  if (!params.success) throw new HttpError(400, "Invalid repository ID");
+  await requireRepositoryAccess(req, params.data.id);
+  const { getPilotStatus } = await import("../services/pilot.service");
+  res.json(await getPilotStatus(params.data.id));
+}
+
 export async function discoverGithubRepositories(req: AuthRequest, res: Response) {
   if (!req.user) throw new HttpError(401, "Authentication required");
 
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-  if (!user) throw new HttpError(400, "User has not connected their GitHub account");
-  const accessToken = decryptConnectedGithubToken(user);
-  const repositories = await fetchAccessibleGithubRepositories(accessToken);
+  const credential = await connectedGithubCredential(req.user.id);
+  const repositories = await fetchAccessibleGithubRepositories(credential);
 
   const githubRepoIds = repositories.map(r => r.githubRepositoryId);
 
@@ -367,7 +436,7 @@ export async function discoverGithubRepositories(req: AuthRequest, res: Response
 
   const existingRepoIds = Array.from(existingRepos.values()).map(r => r.id);
   const userAccesses = await prisma.githubRepositoryAccess.findMany({
-    where: { userId: user.id, repositoryId: { in: existingRepoIds } },
+    where: { userId: req.user.id, repositoryId: { in: existingRepoIds } },
   });
   const userAccessRepoIds = new Set(userAccesses.map(a => a.repositoryId));
 
@@ -398,15 +467,20 @@ export async function connectGithubRepository(req: AuthRequest, res: Response) {
     select: { id: true, githubRepositoryId: true, fullName: true },
   });
 
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-  if (!user) throw new HttpError(400, "User has not connected their GitHub account");
-  const accessToken = decryptConnectedGithubToken(user);
+  const credential = await connectedGithubCredential(req.user.id);
 
   const repoRes = await fetch(`https://api.github.com/repositories/${parsed.data.githubRepositoryId}`, {
-    headers: githubHeaders(accessToken),
+    headers: githubHeaders(credential.accessToken),
   });
 
-  if (repoRes.status === 401 || repoRes.status === 403 || repoRes.status === 404) {
+  if (repoRes.status === 401) {
+    await invalidateGithubOAuthGrant(
+      credential.userId,
+      credential.accessTokenCiphertext,
+    );
+    throw githubReauthenticationError();
+  }
+  if (repoRes.status === 403 || repoRes.status === 404) {
     throw new HttpError(403, "You do not have access to this repository on GitHub");
   }
   if (!repoRes.ok) {
@@ -434,13 +508,13 @@ export async function connectGithubRepository(req: AuthRequest, res: Response) {
   await prisma.githubRepositoryAccess.upsert({
     where: {
       userId_repositoryId: {
-        userId: user.id,
+        userId: req.user.id,
         repositoryId: repo.id,
       },
     },
     update: {},
     create: {
-      userId: user.id,
+      userId: req.user.id,
       repositoryId: repo.id,
       role: "MANAGER",
     },

@@ -170,22 +170,34 @@ What to do instead:
 - Add or update tests for changed behavior.
 - Keep this rule advisory; it is meant to support review, not block it blindly.
 
-## Future policy idea
+### `policy.identifier-naming`
 
-A later phase may add style-oriented policy checks, including naming conventions for variables, functions, files, and folders.
+Optionally checks added JavaScript and TypeScript declarations for the repository's naming policy:
 
-One likely rule shape:
+- variables and functions use `camelCase`
+- classes, interfaces, type aliases, and enums use `PascalCase`
+- constants may use `UPPER_SNAKE_CASE`
 
-- multi-word JavaScript and TypeScript identifiers should use `camelCase`
-- classes should use `PascalCase`
-- constants should use `UPPER_SNAKE_CASE`
-- files and folders should follow the repo's documented naming convention
+The focused parser examines declaration shapes on added lines. It does not attempt to replace a language-aware linter.
 
-Why this is future work:
+### `policy.repository-path-naming`
 
-- style rules are useful for consistency, but they are not security findings
-- they need a repo-specific convention before enforcement makes sense
-- they should stay advisory until the team is comfortable with the signal quality
+Optionally checks added or renamed source files against repository-selected file and folder conventions. Managers can independently choose `kebab-case`, `camelCase`, `snake_case`, or off for files and folders.
+
+Both naming rules are opt-in and remain policy findings. They are stored in review history but do not create inline security comments, contribute to pilot precision, or fail an enforcing Check Run.
+
+Example repository rule configuration:
+
+```json
+{
+  "maintainability": {
+    "enabled": true,
+    "identifierNaming": "CAMEL_PASCAL",
+    "fileNaming": "KEBAB_CASE",
+    "folderNaming": "SNAKE_CASE"
+  }
+}
+```
 
 ## Limits
 

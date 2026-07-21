@@ -8,6 +8,7 @@ import {
   updateRepositorySettings,
   verifyFindingController,
   getPilotPrecisionController,
+  getPilotStatusController,
   discoverGithubRepositories,
   connectGithubRepository,
   testRepositoryAiReviewController,
@@ -39,3 +40,4 @@ repositoryRouter.patch(
 );
 repositoryRouter.patch("/:id/findings/:findingId/verify", authMiddleware, verifyFindingController);
 repositoryRouter.get("/:id/pilot/precision", authMiddleware, getPilotPrecisionController);
+repositoryRouter.get("/:id/pilot/status", authMiddleware, getPilotStatusController);

@@ -32,6 +32,7 @@ const reviewRunSelect = {
   findings: {
     orderBy: [{ severity: "desc" }, { filePath: "asc" }, { lineNumber: "asc" }],
     select: {
+      id: true,
       fingerprint: true,
       ruleId: true,
       ruleVersion: true,
@@ -47,6 +48,9 @@ const reviewRunSelect = {
       remediation: true,
       suppressed: true,
       suppressionReason: true,
+      pilotVerification: true,
+      pilotVerifiedAt: true,
+      pilotNotes: true,
       publicationState: true,
       githubCommentId: true,
     },

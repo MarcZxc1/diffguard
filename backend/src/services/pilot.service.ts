@@ -3,16 +3,32 @@ import { prisma } from "../lib/prisma";
 import type { prisma as prismaClient } from "../lib/prisma";
 import type { AuthenticatedUser } from "./repository-authorization.service";
 import { recordAuditLog } from "./repository-authorization.service";
+import { shouldEnforceRule } from "./pilot-gate.service";
+
+export const PILOT_THRESHOLDS = Object.freeze({
+  minimumReviewedPullRequests: 5,
+  minimumReliability: 0.95,
+  minimumPrecision: 0.9,
+  minimumVerifiedFindings: 10,
+});
+
+export class PilotReadinessError extends Error {
+  constructor(public readonly blockers: string[]) {
+    super("Pilot evidence does not meet the enforcement thresholds");
+  }
+}
+
+export class PilotVerificationInputError extends Error {}
 
 const verificationInputSchema = z.object({
   verification: z.enum(["CONFIRMED", "FALSE_POSITIVE"]),
-  notes: z.string().max(2000).default(""),
+  notes: z.string().trim().max(2000).default(""),
 }).strict();
 
 export const verifyFinding = {
   parseInput(input: unknown) {
     const parsed = verificationInputSchema.safeParse(input);
-    if (!parsed.success) throw new Error("Invalid verification input");
+    if (!parsed.success) throw new PilotVerificationInputError("Invalid verification input");
     return parsed.data;
   },
 
@@ -80,23 +96,147 @@ export function computeRulePrecision(
   };
 }
 
-export async function getPilotPrecisionByRule(repositoryId: string) {
-  const findings = await prisma.finding.findMany({
-    where: { reviewRun: { repositoryId } },
-    select: { ruleId: true, pilotVerification: true },
-  });
+type RulePrecision = ReturnType<typeof computeRulePrecision> & {
+  ruleId: string;
+  ruleVersion: string;
+};
 
-  const byRule = new Map<string, { pilotVerification: string | null }[]>();
+function groupPrecisionByRule(
+  findings: { ruleId: string; ruleVersion: string; pilotVerification: string | null }[],
+): RulePrecision[] {
+  const byRule = new Map<string, {
+    ruleId: string;
+    ruleVersion: string;
+    findings: { pilotVerification: string | null }[];
+  }>();
   for (const finding of findings) {
-    const list = byRule.get(finding.ruleId) ?? [];
-    list.push(finding);
-    byRule.set(finding.ruleId, list);
+    const key = `${finding.ruleId}\u0000${finding.ruleVersion}`;
+    const group = byRule.get(key) ?? {
+      ruleId: finding.ruleId,
+      ruleVersion: finding.ruleVersion,
+      findings: [],
+    };
+    group.findings.push(finding);
+    byRule.set(key, group);
   }
 
-  return Array.from(byRule.entries()).map(([ruleId, ruleFindgs]) => ({
-    ruleId,
-    ...computeRulePrecision(ruleFindgs),
-  }));
+  return Array.from(byRule.values())
+    .map((group) => ({
+      ruleId: group.ruleId,
+      ruleVersion: group.ruleVersion,
+      ...computeRulePrecision(group.findings),
+    }))
+    .sort((left, right) =>
+      left.ruleId.localeCompare(right.ruleId) ||
+      left.ruleVersion.localeCompare(right.ruleVersion)
+    );
+}
+
+export async function getPilotPrecisionByRule(
+  repositoryId: string,
+  database: typeof prismaClient = prisma,
+) {
+  const findings = await database.finding.findMany({
+    where: {
+      reviewRun: { repositoryId },
+      category: "SECURITY",
+      source: "DETERMINISTIC",
+      suppressed: false,
+    },
+    select: { ruleId: true, ruleVersion: true, pilotVerification: true },
+  });
+
+  return groupPrecisionByRule(findings);
+}
+
+export function computePilotReadiness(params: {
+  runs: { pullRequestNumber: number; state: string }[];
+  rules: RulePrecision[];
+  thresholds?: typeof PILOT_THRESHOLDS;
+}) {
+  const thresholds = params.thresholds ?? PILOT_THRESHOLDS;
+  const completedRuns = params.runs.filter((run) =>
+    run.state === "SUCCEEDED" || run.state === "PARTIAL" || run.state === "FAILED"
+  );
+  const successfulRunCount = completedRuns.filter((run) => run.state === "SUCCEEDED").length;
+  const reviewedPullRequestCount = new Set(
+    completedRuns.map((run) => run.pullRequestNumber),
+  ).size;
+  const reliability = completedRuns.length === 0
+    ? 0
+    : successfulRunCount / completedRuns.length;
+  const repositoryEvidenceReady =
+    reviewedPullRequestCount >= thresholds.minimumReviewedPullRequests &&
+    reliability >= thresholds.minimumReliability;
+  const rules = params.rules.map((rule) => {
+    const verifiedFindingCount = rule.confirmedCount + rule.falsePositiveCount;
+    const evidenceReady = shouldEnforceRule({
+      precision: rule.precision,
+      minimumPrecision: thresholds.minimumPrecision,
+      minimumVerifiedFindings: thresholds.minimumVerifiedFindings,
+      totalVerifiedFindings: verifiedFindingCount,
+    });
+    return {
+      ...rule,
+      verifiedFindingCount,
+      eligibleForEnforcement: repositoryEvidenceReady && evidenceReady,
+    };
+  });
+  const eligibleRuleIds = rules
+    .filter((rule) => rule.eligibleForEnforcement)
+    .map((rule) => rule.ruleId);
+  const eligibleRules = rules
+    .filter((rule) => rule.eligibleForEnforcement)
+    .map((rule) => ({ ruleId: rule.ruleId, ruleVersion: rule.ruleVersion }));
+  const blockers: string[] = [];
+  if (reviewedPullRequestCount < thresholds.minimumReviewedPullRequests) {
+    blockers.push(
+      `Review at least ${thresholds.minimumReviewedPullRequests} distinct pull requests (${reviewedPullRequestCount} recorded).`,
+    );
+  }
+  if (reliability < thresholds.minimumReliability) {
+    blockers.push(
+      `Reach ${(thresholds.minimumReliability * 100).toFixed(0)}% successful full-coverage runs (${(reliability * 100).toFixed(1)}% recorded).`,
+    );
+  }
+  if (eligibleRuleIds.length === 0) {
+    blockers.push(
+      `Verify at least ${thresholds.minimumVerifiedFindings} findings for a rule at ${(thresholds.minimumPrecision * 100).toFixed(0)}% precision or better.`,
+    );
+  }
+
+  return {
+    status: blockers.length === 0 ? "READY" as const : "COLLECTING" as const,
+    readyForEnforcement: blockers.length === 0,
+    thresholds,
+    reviewedPullRequestCount,
+    completedRunCount: completedRuns.length,
+    successfulRunCount,
+    partialRunCount: completedRuns.filter((run) => run.state === "PARTIAL").length,
+    failedRunCount: completedRuns.filter((run) => run.state === "FAILED").length,
+    skippedRunCount: params.runs.filter((run) => run.state === "SKIPPED").length,
+    reliability,
+    eligibleRuleIds,
+    eligibleRules,
+    blockers,
+    rules,
+  };
+}
+
+export async function getPilotStatus(
+  repositoryId: string,
+  database: typeof prismaClient = prisma,
+) {
+  const [runs, rules] = await Promise.all([
+    database.reviewRun.findMany({
+      where: { repositoryId },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: { pullRequestNumber: true, state: true },
+    }),
+    getPilotPrecisionByRule(repositoryId, database),
+  ]);
+  return computePilotReadiness({ runs, rules });
 }
 
 export async function snapshotPilotPrecision(repositoryId: string) {
@@ -107,6 +247,7 @@ export async function snapshotPilotPrecision(repositoryId: string) {
         data: {
           repositoryId,
           ruleId: m.ruleId,
+          ruleVersion: m.ruleVersion,
           totalFindings: m.totalFindings,
           confirmedCount: m.confirmedCount,
           falsePositiveCount: m.falsePositiveCount,

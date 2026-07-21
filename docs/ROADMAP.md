@@ -26,13 +26,14 @@ The current implementation:
 - Persists installations, repositories, deliveries, review runs, findings, retry state, and comment publication state.
 - Acknowledges supported deliveries after atomic durable enqueue and processes them in a database-backed worker.
 - Fetches up to 30 pages of changed files and explicitly records partial coverage.
-- Runs seven focused security rule families and one separate repository-policy rule through a versioned contract.
+- Runs seven focused security rule families and three separate repository-policy rules through a versioned contract.
 - Supports repository rule enablement, severity thresholds, ignored paths, and reasoned suppressions.
 - Posts at most three inline security comments with stable fingerprint-marker deduplication.
 - Publishes one GitHub Check Run summary per worker-processed revision, with bounded annotations.
 - Supports optional opt-in structured LLM review with fail-open behavior.
 - Exposes repository-scoped dashboard APIs, settings, metrics, reruns, retention pruning, audit logs, and sanitized PR evidence export.
-- Has 71 passing backend tests covering the Phase 0–5 contracts.
+- Exposes an advisory-pilot dashboard for audited finding verification, rule-version precision, reliability tracking, and precision-gated enforcement.
+- Has 114 passing backend tests covering the implemented contracts.
 
 Known remaining debt:
 
@@ -183,6 +184,17 @@ Exit criteria:
 
 Goal: validate DiffGuard safely on the target repository before relying on it as a merge gate.
 
+Status: pilot workflow implementation and local verification completed on 2026-07-21. A public-evidence audit on 2026-07-21 found only three unique DiffGuard runs, including one partial run and two runs over identical synthetic fixtures; no human finding verdicts were observable. Real target-repository evidence collection remains pending.
+
+Implementation support:
+
+- [x] Expose repository-scoped review findings for manager verification in the dashboard.
+- [x] Record audited confirmed/false-positive decisions and optional notes.
+- [x] Report distinct reviewed PRs, full-coverage reliability, per-rule-version precision, and explicit readiness blockers.
+- [x] Reject enforcement until pilot thresholds are met and restrict blocking results to eligible deterministic rule versions.
+- [x] Keep LLM, policy, suppressed, and unproven rule findings advisory.
+- [x] Document the operational pilot and evidence-retention workflow.
+
 1. Install the GitHub App only on the target repository with minimum permissions.
 2. Run DiffGuard in advisory mode for several representative pull requests.
 3. Record review-run links, confirmed findings, false positives, skipped files, and processing failures.
@@ -198,7 +210,7 @@ Pilot evidence belongs primarily in GitHub. Thesis documentation should link imp
 
 Goal: add GitHub OAuth 2.0 sign-in so individual users can authenticate with GitHub, discover repositories they already have access to, and connect a chosen repository to DiffGuard without manual database editing.
 
-Status: direct GitHub OAuth implementation and local verification completed on 2026-07-12. Supabase remains an allowed future auth provider, but the current code path is direct GitHub OAuth backed by PostgreSQL-compatible Prisma tables.
+Status: direct GitHub OAuth and production token-lifecycle implementation completed and locally verified as of 2026-07-21. Supabase remains an allowed future auth provider, but the current code path is direct GitHub OAuth backed by PostgreSQL-compatible Prisma tables.
 
 Implementation may use either:
 
@@ -224,53 +236,71 @@ Exit criteria:
 - [x] Auth/session handling avoids exposing GitHub tokens or backend JWTs in callback URLs.
 - [x] The GitHub App still owns review execution, checks, and comments.
 - [x] The repository backend runs unchanged against Docker Postgres, local Postgres, or Supabase Postgres.
-- [ ] Production deployments should add token revocation/expiry handling and, if GitHub expiring user tokens are enabled, refresh-token support or a clear re-authentication path.
+- [x] Production deployments handle token revocation/expiry, automatically rotate expiring GitHub user tokens when refresh tokens are supplied, and provide a clear re-authentication path when the grant cannot be refreshed.
 
 ## Phase 7.1 — Dashboard Observability and AI Review Operations
 
 Goal: make review progress and optional AI review status understandable without requiring manual refreshes or noisy PR comments.
 
+Status: implementation and local verification completed on 2026-07-21.
+
 Important boundary: AI infrastructure failures are operational signals, not contributor review comments. The frontend should show detailed AI status for maintainers. The GitHub Check Run should summarize AI coverage briefly. Inline PR comments should be reserved for actionable validated findings only.
 
-1. Add near-realtime dashboard updates for repository review runs so users do not need to click Refresh after opening a PR or rerunning a review.
+1. [x] Add near-realtime dashboard updates for repository review runs so users do not need to click Refresh after opening a PR or rerunning a review.
    - Preferred first implementation: bounded polling while the selected repository has `QUEUED` or `PROCESSING` runs.
    - Future upgrade: Server-Sent Events or WebSocket stream if polling becomes noisy.
    - Preserve explicit loading, stale, error, and empty states.
-2. Surface richer LLM review state in the frontend review-run table or detail panel.
+2. [x] Surface richer LLM review state in the frontend review-run table or detail panel.
    - Show `SKIPPED`, `SUCCEEDED`, or `FAILED`.
    - Show sanitized `llmFailureMessage` when failed.
    - Clarify that deterministic review still completed when LLM fails open.
-3. Improve sanitized LLM failure recording.
+3. [x] Improve sanitized LLM failure recording.
    - Store safe status-level messages such as `OpenAI review request failed with status 400`.
    - Do not persist OpenAI response bodies, prompts, authorization headers, API keys, raw patches, or suspected secret values.
-4. Add a manager-only **Test AI Review** button in repository settings.
+4. [x] Add a manager-only **Test AI Review** button in repository settings.
    - Backend endpoint should send a tiny synthetic structured-output request to the configured model.
    - It should verify API reachability, authentication, quota/rate-limit status, model availability, and structured-output compatibility.
    - It must not send repository code for this health check.
-5. Display a toast after testing AI review.
+5. [x] Display a toast after testing AI review.
    - Success example: `AI review is reachable for gpt-5.6-sol.`
    - Failure examples: `OpenAI authentication failed`, `quota or rate limit reached`, `model does not support required structured output`, or `request timed out`.
    - Toasts should avoid leaking secrets or raw upstream response bodies.
-6. Include AI status in the GitHub Check Run summary only at coverage level.
+6. [x] Include AI status in the GitHub Check Run summary only at coverage level.
    - Good: `LLM review: failed open; deterministic checks completed.`
    - Avoid posting PR comments for AI infrastructure failures.
-7. Allow AI-generated PR comments only for validated actionable findings.
+7. [x] Allow AI-generated PR comments only for validated actionable findings.
    - The finding must map to an added line, pass strict schema validation, include evidence/remediation, and be deduplicated against deterministic findings.
    - Label them clearly as AI-assisted findings.
 
 Exit criteria:
 
-- Review-run state updates appear in the dashboard automatically during active processing.
-- Maintainers can test OpenAI configuration from the dashboard and receive a toast result.
-- LLM failure reasons are visible in the frontend and sanitized in persisted data.
-- GitHub Check Runs summarize AI coverage without creating noisy infrastructure-failure comments.
-- AI-generated PR comments are only posted for validated actionable findings.
+- [x] Review-run state updates appear in the dashboard automatically during active processing.
+- [x] Maintainers can test OpenAI configuration from the dashboard and receive a toast result.
+- [x] LLM failure reasons are visible in the frontend and sanitized in persisted data.
+- [x] GitHub Check Runs summarize AI coverage without creating noisy infrastructure-failure comments.
+- [x] AI-generated PR comments are only posted for validated actionable findings.
 
 ## Phase 8 — Style and Maintainability Policies
 
-Future work may add advisory policy checks for naming conventions and other maintainability standards, such as camelCase for multi-word identifiers, PascalCase for classes, and repository-specific file or folder naming conventions.
+Goal: provide opt-in, repository-specific naming feedback without presenting style preferences as security findings.
 
-These checks should remain separate from security findings and should stay advisory until the team is satisfied with precision and usefulness on real pull requests.
+Status: initial JavaScript/TypeScript naming-policy implementation and local verification completed on 2026-07-21.
+
+- [x] Add an opt-in `policy.identifier-naming` rule for camelCase value/function declarations and PascalCase type declarations.
+- [x] Permit conventional `UPPER_SNAKE_CASE` constants and leading underscores.
+- [x] Add an opt-in `policy.repository-path-naming` rule for added or renamed source files and folders.
+- [x] Let repository managers independently select off, kebab-case, camelCase, or snake_case path conventions from the dashboard.
+- [x] Keep naming findings categorized as `POLICY`, excluded from security comments, pilot precision, and blocking conclusions.
+- [x] Bound findings per naming rule and add positive, negative, opt-in, and enforcement-boundary tests.
+
+Exit criteria:
+
+- [x] Existing repositories receive no naming findings until a manager opts in.
+- [x] Repository naming configuration is strictly validated and persisted with existing rule configuration.
+- [x] Policy findings explain the configured convention and remediation without claiming a vulnerability.
+- [x] Naming findings cannot fail a Check Run, even in enforcing mode.
+
+Future Phase 8 extensions may add language-aware adapters or other maintainability policies after real-repository signal quality is evaluated.
 
 ## Cross-Cutting Definition of Done
 

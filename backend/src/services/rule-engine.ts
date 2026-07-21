@@ -17,11 +17,31 @@ const suppressionSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 }).strict();
 
+const pathNamingConventionSchema = z.enum([
+  "OFF",
+  "KEBAB_CASE",
+  "CAMEL_CASE",
+  "SNAKE_CASE",
+]);
+
+const maintainabilityPolicySchema = z.object({
+  enabled: z.boolean().default(false),
+  identifierNaming: z.enum(["OFF", "CAMEL_PASCAL"]).default("CAMEL_PASCAL"),
+  fileNaming: pathNamingConventionSchema.default("OFF"),
+  folderNaming: pathNamingConventionSchema.default("OFF"),
+}).strict().default({
+  enabled: false,
+  identifierNaming: "CAMEL_PASCAL",
+  fileNaming: "OFF",
+  folderNaming: "OFF",
+});
+
 export const repositoryRuleConfigurationSchema = z.object({
   enabledRuleIds: z.array(z.string().min(1)).max(100).optional(),
   severityThreshold: findingSeveritySchema.default("LOW"),
   ignoredPaths: z.array(z.string().min(1).max(300)).max(100).default([]),
   suppressions: z.array(suppressionSchema).max(200).default([]),
+  maintainability: maintainabilityPolicySchema,
 }).strict();
 
 export type FindingSeverity = z.infer<typeof findingSeveritySchema>;
@@ -38,6 +58,7 @@ export type RuleContext = {
   headSha: string;
   files: ScanFile[];
   changedLines: ChangedLine[];
+  maintainability?: RepositoryRuleConfiguration["maintainability"];
 };
 
 export type RuleCandidate = {
@@ -80,6 +101,7 @@ export class RuleConfigurationError extends Error {}
 const sourceFilePattern = /\.(?:[cm]?[jt]sx?|py|rb|php|java|go|rs|cs)$/i;
 const configurationFilePattern = /(?:^|\/)(?:\.env(?:\.[^/]+)?|[^/]*(?:config|settings)[^/]*)$|\.(?:json|ya?ml|toml|ini|conf)$/i;
 const testFilePattern = /(?:^|\/)(?:test|tests|__tests__|fixtures?)(?:\/|$)|(?:\.|_)(?:spec|test)\.[^.]+$/i;
+const javascriptFilePattern = /\.[cm]?[jt]sx?$/i;
 
 function addedLines(context: RuleContext) {
   return context.changedLines.filter((line) => line.changeType === "added");
@@ -326,6 +348,181 @@ const missingTestsPolicyRule: DeterministicRule = {
   },
 };
 
+function identifierCore(identifier: string) {
+  return identifier.replace(/^_+/, "");
+}
+
+function validCamelCase(identifier: string) {
+  const core = identifierCore(identifier);
+  return core.length > 0 && /^[a-z][A-Za-z0-9]*$/.test(core);
+}
+
+function validPascalCase(identifier: string) {
+  const core = identifierCore(identifier);
+  return core.length > 0 && /^[A-Z][A-Za-z0-9]*$/.test(core);
+}
+
+const identifierNamingPolicyRule: DeterministicRule = {
+  id: "policy.identifier-naming",
+  version: "1.0.0",
+  category: "POLICY",
+  supportedFiles: ["JavaScript", "TypeScript"],
+  severity: "LOW",
+  confidence: 0.9,
+  scan(context) {
+    if (
+      !context.maintainability?.enabled ||
+      context.maintainability.identifierNaming !== "CAMEL_PASCAL"
+    ) {
+      return [];
+    }
+
+    return addedLines(context)
+      .filter((line) => javascriptFilePattern.test(line.filePath))
+      .flatMap((line): RuleCandidate[] => {
+        const trimmed = line.content.trimStart();
+        if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) {
+          return [];
+        }
+        const valueDeclaration = line.content.match(
+          /\b(const|let|var|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)/,
+        );
+        if (valueDeclaration) {
+          const declaration = valueDeclaration[1]!;
+          const identifier = valueDeclaration[2]!;
+          const constantStyle = declaration === "const" && /^_?[A-Z][A-Z0-9_]*$/.test(identifier);
+          const frameworkStyle = identifier.includes("$");
+          if (!constantStyle && !frameworkStyle && !validCamelCase(identifier)) {
+            return [{
+              filePath: line.filePath,
+              lineNumber: line.lineNumber,
+              title: "Identifier does not follow camelCase",
+              evidence: `Added ${declaration} identifier ${identifier}, which does not match the configured camelCase policy.`,
+              explanation:
+                "This is maintainability feedback for JavaScript and TypeScript declarations, not a security finding.",
+              remediation:
+                "Rename multi-word variables and functions to camelCase, or disable the repository naming policy when another convention is intentional.",
+            }];
+          }
+          return [];
+        }
+
+        const typeDeclaration = line.content.match(
+          /\b(class|interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)/,
+        );
+        if (typeDeclaration) {
+          const declaration = typeDeclaration[1]!;
+          const identifier = typeDeclaration[2]!;
+          if (!identifier.includes("$") && !validPascalCase(identifier)) {
+            return [{
+              filePath: line.filePath,
+              lineNumber: line.lineNumber,
+              title: "Type identifier does not follow PascalCase",
+              evidence: `Added ${declaration} identifier ${identifier}, which does not match the configured PascalCase policy.`,
+              explanation:
+                "Consistent type naming makes declarations easier to distinguish, but this remains advisory maintainability feedback.",
+              remediation:
+                "Rename classes, interfaces, type aliases, and enums to PascalCase, or disable the repository naming policy when another convention is intentional.",
+            }];
+          }
+        }
+        return [];
+      })
+      .slice(0, 20);
+  },
+};
+
+type PathNamingConvention = z.infer<typeof pathNamingConventionSchema>;
+
+function matchesPathNamingConvention(value: string, convention: PathNamingConvention) {
+  if (convention === "OFF") return true;
+  if (convention === "KEBAB_CASE") {
+    return /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(value);
+  }
+  if (convention === "SNAKE_CASE") {
+    return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value);
+  }
+  return /^[a-z][A-Za-z0-9]*$/.test(value);
+}
+
+const conventionalFileNames = new Set([
+  "changelog",
+  "dockerfile",
+  "index",
+  "license",
+  "makefile",
+  "readme",
+]);
+
+function fileStem(fileName: string) {
+  return fileName.split(".")[0] ?? fileName;
+}
+
+const repositoryPathNamingPolicyRule: DeterministicRule = {
+  id: "policy.repository-path-naming",
+  version: "1.0.0",
+  category: "POLICY",
+  supportedFiles: ["source"],
+  severity: "LOW",
+  confidence: 0.88,
+  scan(context) {
+    const policy = context.maintainability;
+    if (!policy?.enabled || policy.fileNaming === "OFF" && policy.folderNaming === "OFF") {
+      return [];
+    }
+
+    return context.files
+      .filter((file) =>
+        (file.status === "added" || file.status === "renamed") &&
+        sourceFilePattern.test(file.filename)
+      )
+      .flatMap((file): RuleCandidate[] => {
+        const segments = file.filename.split("/").filter(Boolean);
+        const basename = segments.at(-1) ?? file.filename;
+        const stem = fileStem(basename);
+        const firstAddedLine = context.changedLines.find(
+          (line) => line.filePath === file.filename && line.changeType === "added",
+        );
+        if (
+          policy.fileNaming !== "OFF" &&
+          !conventionalFileNames.has(stem.toLowerCase()) &&
+          !matchesPathNamingConvention(stem, policy.fileNaming)
+        ) {
+          return [{
+            filePath: file.filename,
+            lineNumber: firstAddedLine?.lineNumber ?? 1,
+            title: "File name does not match repository policy",
+            evidence: `Added or renamed file ${basename}, which does not match ${policy.fileNaming}.`,
+            explanation:
+              "Repository-specific file naming improves discoverability, but this is advisory maintainability feedback.",
+            remediation:
+              "Rename the file to the configured convention or update the repository policy when the exception is intentional.",
+          }];
+        }
+
+        const invalidFolder = segments.slice(0, -1).find((segment) =>
+          !segment.startsWith(".") &&
+          segment !== "__tests__" &&
+          !matchesPathNamingConvention(segment, policy.folderNaming)
+        );
+        if (invalidFolder && policy.folderNaming !== "OFF") {
+          return [{
+            filePath: file.filename,
+            lineNumber: firstAddedLine?.lineNumber ?? 1,
+            title: "Folder name does not match repository policy",
+            evidence: `Added or renamed a source file under folder ${invalidFolder}, which does not match ${policy.folderNaming}.`,
+            explanation:
+              "Repository-specific folder naming improves navigation, but this is advisory maintainability feedback.",
+            remediation:
+              "Rename the folder to the configured convention or update the repository policy when the exception is intentional.",
+          }];
+        }
+        return [];
+      })
+      .slice(0, 20);
+  },
+};
+
 export const deterministicRules: readonly DeterministicRule[] = [
   hardcodedSecretRule,
   unsafeSqlRule,
@@ -335,6 +532,8 @@ export const deterministicRules: readonly DeterministicRule[] = [
   insecureCorsRule,
   missingValidationRule,
   missingTestsPolicyRule,
+  identifierNamingPolicyRule,
+  repositoryPathNamingPolicyRule,
 ];
 
 const severityRank: Record<FindingSeverity, number> = {
@@ -399,6 +598,7 @@ export function scanPullRequest(params: {
     : undefined;
   const context: RuleContext = {
     ...params.context,
+    maintainability: configuration.maintainability,
     files: params.context.files.filter(
       (file) => !configuration.ignoredPaths.some((pattern) => pathMatches(pattern, file.filename)),
     ),

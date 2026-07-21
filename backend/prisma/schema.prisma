@@ -70,6 +70,10 @@ model User {
   role                        Role                        @default(USER)
   githubId                    String?                     @unique
   githubAccessTokenCiphertext String?
+  githubAccessTokenExpiresAt  DateTime?
+  githubRefreshTokenCiphertext String?
+  githubRefreshTokenExpiresAt DateTime?
+  githubTokenInvalidatedAt    DateTime?
   repositoryAccesses          GithubRepositoryAccess[]
   auditLogs                   AuditLog[]
   evidenceExports             PullRequestEvidenceExport[]
@@ -263,6 +267,7 @@ model PilotPrecisionSnapshot {
   repositoryId       String
   repository         GithubRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   ruleId             String
+  ruleVersion        String           @default("unknown")
   totalFindings      Int
   confirmedCount     Int
   falsePositiveCount Int
@@ -270,5 +275,5 @@ model PilotPrecisionSnapshot {
   precision          Float
   snapshotAt         DateTime         @default(now())
 
-  @@index([repositoryId, ruleId, snapshotAt])
+  @@index([repositoryId, ruleId, ruleVersion, snapshotAt], map: "pilot_precision_repo_rule_version_snapshot_idx")
 }

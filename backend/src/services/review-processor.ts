@@ -24,6 +24,7 @@ import {
   type RuleFinding,
 } from "./rule-engine";
 import { runStructuredLlmReview } from "./llm-review.service";
+import { getPilotStatus } from "./pilot.service";
 
 export type ReviewRunJob = {
   id: string;
@@ -178,13 +179,18 @@ function summarizeReview(params: {
     .map((severity) => `${severity}: ${severityCounts[severity]}`)
     .join(", ") || "none";
   const ruleVersions = deterministicRules.map((rule) => `${rule.id}@${rule.version}`).join(", ");
+  const llmCoverage = params.llmState === "FAILED"
+    ? "failed open; deterministic checks completed"
+    : params.llmState === "SUCCEEDED"
+      ? "completed"
+      : "skipped";
   return [
     `State: ${params.state}`,
     `Analyzed files: ${params.analyzedFileCount}`,
     `Skipped files: ${params.skippedFileCount}`,
     `Findings: ${params.findings.length} (${counts})`,
     `Deterministic rules: ${ruleVersions}`,
-    `LLM review: ${params.llmState}`,
+    `LLM review: ${llmCoverage}.`,
     params.limitation ??
       "Limitations: deterministic rules are focused heuristics; branch protection remains advisory until pilot precision is measured.",
   ].join("\n");
@@ -208,10 +214,11 @@ function checkAnnotations(findings: RuleFinding[]): GithubCheckRunAnnotation[] {
     }));
 }
 
-function checkConclusion(params: {
+export function checkConclusion(params: {
   state: "SUCCEEDED" | "PARTIAL" | "FAILED" | "SKIPPED";
   findings: RuleFinding[];
   mode: string;
+  enforceableRules?: ReadonlyArray<{ ruleId: string; ruleVersion: string }>;
 }) {
   if (params.state === "FAILED") return "failure" as const;
   if (params.state === "SKIPPED") return "skipped" as const;
@@ -219,6 +226,10 @@ function checkConclusion(params: {
   const highConfidence = params.findings.some((finding) =>
     finding.category === "SECURITY" &&
     !finding.suppressed &&
+    finding.source === "DETERMINISTIC" &&
+    (params.enforceableRules ?? []).some((rule) =>
+      rule.ruleId === finding.ruleId && rule.ruleVersion === finding.ruleVersion
+    ) &&
     severityRank[finding.severity] >= severityRank.HIGH &&
     finding.confidence >= 0.9
   );
@@ -378,6 +389,9 @@ export async function processReviewRun(run: ReviewRunJob) {
 
   const completedAt = new Date();
   const finalState = analysis.partial ? "PARTIAL" : "SUCCEEDED";
+  const pilotStatus = run.repository.checkRunMode === "ENFORCING"
+    ? await getPilotStatus(run.repository.id)
+    : null;
   const summary = summarizeReview({
     state: finalState,
     analyzedFileCount: analysis.analyzedFileCount,
@@ -399,6 +413,7 @@ export async function processReviewRun(run: ReviewRunJob) {
       state: finalState,
       findings,
       mode: run.repository.checkRunMode,
+      enforceableRules: pilotStatus?.eligibleRules,
     }),
     annotations: checkAnnotations(findings),
   });
