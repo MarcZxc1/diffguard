@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { env } from "../env";
 import { prisma } from "../lib/prisma";
 import type { prisma as prismaClient } from "../lib/prisma";
 import type { AuthenticatedUser } from "./repository-authorization.service";
 import { recordAuditLog } from "./repository-authorization.service";
 import { shouldEnforceRule } from "./pilot-gate.service";
+import { deterministicRules } from "./rule-engine";
 
 export const PILOT_THRESHOLDS = Object.freeze({
   minimumReviewedPullRequests: 5,
@@ -229,6 +231,39 @@ export function computePilotReadiness(params: {
   };
 }
 
+type PilotReadiness = ReturnType<typeof computePilotReadiness>;
+
+export function addEnforcementAvailability(
+  pilot: PilotReadiness,
+  options: {
+    nodeEnv: "development" | "test" | "production";
+    developmentBypassEnabled: boolean;
+  } = {
+    nodeEnv: env.NODE_ENV,
+    developmentBypassEnabled: env.DIFFGUARD_DEV_ENFORCEMENT_BYPASS,
+  },
+) {
+  const developmentBypassEnabled =
+    options.nodeEnv === "development" && options.developmentBypassEnabled;
+  const developmentBypassActive =
+    developmentBypassEnabled && !pilot.readyForEnforcement;
+  const effectiveEnforceableRules = developmentBypassActive
+    ? deterministicRules
+      .filter((rule) => rule.category === "SECURITY")
+      .map((rule) => ({ ruleId: rule.id, ruleVersion: rule.version }))
+    : pilot.eligibleRules;
+
+  return {
+    ...pilot,
+    canEnableEnforcing: pilot.readyForEnforcement || developmentBypassEnabled,
+    effectiveEnforceableRules,
+    developmentBypass: {
+      enabled: developmentBypassEnabled,
+      active: developmentBypassActive,
+    },
+  };
+}
+
 export async function getPilotStatus(
   repositoryId: string,
   database: typeof prismaClient = prisma,
@@ -242,7 +277,7 @@ export async function getPilotStatus(
     }),
     getPilotPrecisionByRule(repositoryId, database),
   ]);
-  return computePilotReadiness({ runs, rules });
+  return addEnforcementAvailability(computePilotReadiness({ runs, rules }));
 }
 
 export async function snapshotPilotPrecision(repositoryId: string) {

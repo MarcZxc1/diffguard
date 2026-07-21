@@ -4,9 +4,10 @@ import type { Request, Response } from "express";
 
 process.env.DATABASE_URL ??= "postgresql://diffguard:diffguard@localhost:54519/diffguard";
 process.env.JWT_SECRET ??= "phase-zero-test-jwt-secret";
-process.env.GITHUB_WEBHOOK_SECRET = "phase-zero-test-webhook-secret";
+process.env.GITHUB_WEBHOOK_SECRET ??= "phase-zero-test-webhook-secret";
 
 const { createApp } = await import("./app");
+const { env } = await import("./env");
 const {
   githubWebhookRouter,
   createGithubWebhookHandler,
@@ -16,7 +17,7 @@ const {
 
 function signatureFor(body: Buffer) {
   return `sha256=${crypto
-    .createHmac("sha256", process.env.GITHUB_WEBHOOK_SECRET!)
+    .createHmac("sha256", env.GITHUB_WEBHOOK_SECRET)
     .update(body)
     .digest("hex")}`;
 }

@@ -15,6 +15,12 @@ Skipped runs are reported but do not count as completed analysis. Partial and fa
 
 These targets control whether DiffGuard can enter `ENFORCING` mode. Making the resulting Check Run required is a separate, deliberate GitHub branch-protection change.
 
+### Development-only enforcement exercise
+
+To exercise an enforcing Check Run locally before the acceptance targets are met, set both `NODE_ENV=development` and `DIFFGUARD_DEV_ENFORCEMENT_BYPASS=true`, then restart the backend. The dashboard visibly labels the bypass while continuing to show the real `COLLECTING` status, blockers, and eligible-rule count. In this mode all deterministic security rules can fail the Check Run; policy and LLM findings remain advisory. The transition is written to the audit log.
+
+This bypass does not create pilot evidence and must not be used to claim that the acceptance targets passed. Production startup rejects the flag.
+
 ## Current target evidence snapshot
 
 A read-only audit of the public target repository on 2026-07-21 found DiffGuard checks associated with PRs [#4](https://github.com/MarcZxc1/diffguard/pull/4), [#5](https://github.com/MarcZxc1/diffguard/pull/5), [#6](https://github.com/MarcZxc1/diffguard/pull/6), [#7](https://github.com/MarcZxc1/diffguard/pull/7), and [#8](https://github.com/MarcZxc1/diffguard/pull/8). This does **not** complete the advisory pilot:

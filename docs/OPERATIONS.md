@@ -69,6 +69,8 @@ DiffGuard sends only bounded, redacted added-line context and uses strict struct
 
 Use [the Phase 6 pilot runbook](PILOT.md) to collect and classify real-repository evidence. The dashboard keeps enforcement locked until the target has at least five distinct reviewed PRs, 95% successful full-coverage runs, and at least one deterministic rule version with ten verified findings at 90% precision or better.
 
+For local development demonstrations only, `DIFFGUARD_DEV_ENFORCEMENT_BYPASS=true` permits the transition and makes all deterministic security rule versions enforceable when `NODE_ENV=development`. It does not change the recorded pilot status, evidence, eligible-rule count, or blockers; each bypass-assisted transition is audited. The backend rejects this setting at startup when `NODE_ENV=production`.
+
 Switching the repository to `ENFORCING` does not modify GitHub branch protection. Make the DiffGuard Check Run required in GitHub only after reviewing the pilot evidence and exercising enforcement on a non-critical pull request.
 
 ## Evidence Export

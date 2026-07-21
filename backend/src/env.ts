@@ -1,6 +1,12 @@
 import { z } from "zod";
 import "dotenv/config";
 
+const strictBoolean = z.preprocess((value) => {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return value;
+}, z.boolean());
+
 const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -26,6 +32,22 @@ const envSchema = z.object({
 
   OPENAI_API_KEY: z.string().min(1).optional(),
   OPENAI_MODEL: z.string().min(1).default("gpt-5.6-sol"),
+  DIFFGUARD_DEV_ENFORCEMENT_BYPASS: strictBoolean.default(false),
+}).superRefine((environment, context) => {
+  if (
+    environment.NODE_ENV === "production" &&
+    environment.DIFFGUARD_DEV_ENFORCEMENT_BYPASS
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["DIFFGUARD_DEV_ENFORCEMENT_BYPASS"],
+      message: "DIFFGUARD_DEV_ENFORCEMENT_BYPASS cannot be enabled in production",
+    });
+  }
 });
 
-export const env = envSchema.parse(process.env);
+export function parseEnvironment(input: Record<string, unknown>) {
+  return envSchema.parse(input);
+}
+
+export const env = parseEnvironment(process.env);
