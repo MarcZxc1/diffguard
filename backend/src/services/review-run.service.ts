@@ -32,6 +32,7 @@ const reviewRunSelect = {
   findings: {
     orderBy: [{ severity: "desc" }, { filePath: "asc" }, { lineNumber: "asc" }],
     select: {
+      id: true,
       fingerprint: true,
       ruleId: true,
       ruleVersion: true,
@@ -47,11 +48,29 @@ const reviewRunSelect = {
       remediation: true,
       suppressed: true,
       suppressionReason: true,
+      pilotVerification: true,
+      pilotVerifiedAt: true,
+      pilotNotes: true,
       publicationState: true,
       githubCommentId: true,
     },
   },
 } satisfies Prisma.ReviewRunSelect;
+
+type ReviewRunRecord = Prisma.ReviewRunGetPayload<{
+  select: typeof reviewRunSelect;
+}>;
+
+export function serializeReviewRun(record: ReviewRunRecord) {
+  return {
+    ...record,
+    checkRunId: record.checkRunId?.toString() ?? null,
+    findings: record.findings.map((finding) => ({
+      ...finding,
+      githubCommentId: finding.githubCommentId?.toString() ?? null,
+    })),
+  };
+}
 
 export const reviewRunService = {
   async getById(id: string) {
@@ -60,12 +79,6 @@ export const reviewRunService = {
       select: reviewRunSelect,
     });
     if (!reviewRun) return null;
-    return {
-      ...reviewRun,
-      findings: reviewRun.findings.map((finding) => ({
-        ...finding,
-        githubCommentId: finding.githubCommentId?.toString() ?? null,
-      })),
-    };
+    return serializeReviewRun(reviewRun);
   },
 };

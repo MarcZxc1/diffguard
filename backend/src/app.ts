@@ -8,12 +8,18 @@ import { healthRouter } from "./routes/health.routes";
 import { reviewRunRouter } from "./routes/review-run.routes";
 import { repositoryRouter } from "./routes/repository.routes";
 import { userRouter } from "./routes/user.routes";
+import { env } from "./env";
+import { jsonBigIntReplacer } from "./lib/json";
 
 export function createApp() {
   const app = express();
 
+  // Prisma maps PostgreSQL BIGINT columns to JavaScript bigint values, which
+  // JSON.stringify cannot serialize without an explicit API-boundary policy.
+  app.set("json replacer", jsonBigIntReplacer);
+
   app.use(helmet());
-  app.use(cors({ origin: "http://localhost:5173", credentials: true }));
+  app.use(cors({ origin: new URL(env.FRONTEND_URL).origin, credentials: true }));
 
   // GitHub signs the original bytes, so this router must run before express.json().
   app.use("/api/webhook", githubWebhookRouter);

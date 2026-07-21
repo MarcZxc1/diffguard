@@ -7,6 +7,8 @@ import type { RuleFinding } from "./rule-engine";
 const MAX_CONTEXT_LINES = 80;
 const MAX_CONTEXT_CHARS = 12_000;
 const MAX_LLM_FINDINGS = 5;
+const AI_HEALTH_CHECK_COOLDOWN_MILLISECONDS = 30_000;
+const aiHealthCheckTimestamps = new Map<string, number>();
 
 const llmFindingSchema = z.object({
   filePath: z.string().min(1).max(1024),
@@ -55,6 +57,22 @@ export type OpenAiHealthResult = {
   model: string;
   message: string;
 };
+
+export function consumeAiHealthCheckRateLimit(key: string, now = Date.now()) {
+  const previous = aiHealthCheckTimestamps.get(key);
+  if (previous !== undefined && now - previous < AI_HEALTH_CHECK_COOLDOWN_MILLISECONDS) {
+    return AI_HEALTH_CHECK_COOLDOWN_MILLISECONDS - (now - previous);
+  }
+  aiHealthCheckTimestamps.set(key, now);
+  if (aiHealthCheckTimestamps.size > 1_000) {
+    for (const [candidate, timestamp] of aiHealthCheckTimestamps) {
+      if (now - timestamp >= AI_HEALTH_CHECK_COOLDOWN_MILLISECONDS) {
+        aiHealthCheckTimestamps.delete(candidate);
+      }
+    }
+  }
+  return 0;
+}
 
 function redactForModel(content: string) {
   return content

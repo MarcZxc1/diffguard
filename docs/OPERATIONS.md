@@ -47,6 +47,14 @@ Required repository permissions:
 
 Subscribe to the Pull request event only. Do not grant Contents, organization, or broader permissions unless a later roadmap item explicitly requires them.
 
+## GitHub User OAuth Lifecycle
+
+The user OAuth web flow uses state validation and S256 PKCE. Access tokens and optional refresh tokens are stored only as AES-256-GCM ciphertext. If GitHub supplies expiry metadata, DiffGuard refreshes the token within one minute of expiry and persists the rotated access/refresh pair atomically.
+
+Existing non-expiring OAuth tokens remain compatible because their expiry fields are null. When a refresh token has expired, GitHub rejects the refresh grant, or a user API call returns `401`, DiffGuard clears only the matching token record and returns `GITHUB_REAUTH_REQUIRED`. The dashboard then shows **Reconnect GitHub**. A GitHub `5xx` or rate-limit response does not clear a valid stored grant.
+
+Production deployments should keep `GITHUB_CLIENT_SECRET` and `GITHUB_OAUTH_TOKEN_ENCRYPTION_KEY` in a secret manager, enable expiring user-to-server tokens for the GitHub App, and monitor repeated refresh failures without logging token request or response bodies. See GitHub's [user access token refresh documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens).
+
 ## Optional LLM Review
 
 LLM review is disabled by default and requires:
@@ -56,6 +64,12 @@ LLM review is disabled by default and requires:
 - optional `OPENAI_MODEL`, defaulting to `gpt-5.6-sol`
 
 DiffGuard sends only bounded, redacted added-line context and uses strict structured output. OpenAI failures fail open and are recorded in review-run LLM state without blocking deterministic review.
+
+## Advisory Pilot
+
+Use [the Phase 6 pilot runbook](PILOT.md) to collect and classify real-repository evidence. The dashboard keeps enforcement locked until the target has at least five distinct reviewed PRs, 95% successful full-coverage runs, and at least one deterministic rule version with ten verified findings at 90% precision or better.
+
+Switching the repository to `ENFORCING` does not modify GitHub branch protection. Make the DiffGuard Check Run required in GitHub only after reviewing the pilot evidence and exercising enforcement on a non-critical pull request.
 
 ## Evidence Export
 

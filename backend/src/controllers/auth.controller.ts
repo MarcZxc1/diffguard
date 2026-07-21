@@ -1,15 +1,18 @@
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { sign } from "jsonwebtoken";
-import { hash, verify } from "argon2";
+import { sign, verify as verifyJwt } from "jsonwebtoken";
+import { hash, verify as verifyPassword } from "argon2";
 import { HttpError } from "../middlewares/error.middleware";
 import { prisma } from "../lib/prisma";
 import { env } from "../env";
 import {
-  encryptOAuthToken,
+  createPkcePair,
+  githubOAuthTokenResponseSchema,
+  githubOAuthTokenUpdate,
   hashOAuthExchangeCode,
 } from "../services/oauth-token.service";
+import type { AuthRequest } from "../middlewares/auth.middleware";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -31,10 +34,6 @@ const oauthExchangeSchema = z.object({
   code: z.string().min(32).max(200),
 }).strict();
 
-const githubTokenSchema = z.object({
-  access_token: z.string().min(1),
-}).passthrough();
-
 const githubUserSchema = z.object({
   id: z.number().int().positive(),
   login: z.string().min(1).max(200),
@@ -48,6 +47,8 @@ const githubEmailsSchema = z.array(z.object({
 }));
 
 const oauthStateCookie = "diffguard_oauth_state";
+const oauthVerifierCookie = "diffguard_oauth_verifier";
+const oauthLinkCookie = "diffguard_oauth_link";
 
 function jwtForUser(user: { id: string; role: string }) {
   return sign({ sub: user.id, role: user.role }, JWT_SECRET!, { expiresIn: "7d" });
@@ -76,6 +77,49 @@ function readCookie(req: Request, name: string) {
 function redirectUri(req: Request) {
   return env.GITHUB_OAUTH_REDIRECT_URI ||
     `${req.protocol}://${req.get("host")}/api/auth/github/callback`;
+}
+
+function beginGithubOAuth(req: Request, res: Response, linkUserId?: string) {
+  const clientId = env.GITHUB_CLIENT_ID;
+  if (!clientId) {
+    throw new HttpError(500, "GITHUB_CLIENT_ID is not configured");
+  }
+  const state = crypto.randomBytes(32).toString("base64url");
+  const pkce = createPkcePair();
+  const url = new URL("https://github.com/login/oauth/authorize");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri(req));
+  url.searchParams.set("scope", "read:user user:email repo");
+  url.searchParams.set("state", state);
+  url.searchParams.set("code_challenge", pkce.challenge);
+  url.searchParams.set("code_challenge_method", "S256");
+
+  res.cookie(oauthStateCookie, state, oauthCookieOptions());
+  res.cookie(oauthVerifierCookie, pkce.verifier, oauthCookieOptions());
+  if (linkUserId) {
+    res.cookie(
+      oauthLinkCookie,
+      sign({ sub: linkUserId, purpose: "github-link" }, JWT_SECRET!, { expiresIn: "10m" }),
+      oauthCookieOptions(),
+    );
+  }
+  return url.toString();
+}
+
+function readGithubLinkUserId(linkToken: string | undefined) {
+  if (!linkToken) return undefined;
+  try {
+    const payload = verifyJwt(linkToken, JWT_SECRET!, { algorithms: ["HS256"] }) as {
+      sub?: unknown;
+      purpose?: unknown;
+    };
+    if (typeof payload.sub !== "string" || payload.purpose !== "github-link") {
+      throw new Error("Invalid link intent");
+    }
+    return payload.sub;
+  } catch {
+    throw new HttpError(400, "GitHub link intent is invalid or expired");
+  }
 }
 
 export async function register(req: Request, res: Response) {
@@ -126,7 +170,7 @@ export async function login(req: Request, res: Response) {
     throw new HttpError(401, "Invalid email or password");
   }
 
-  const isValidPassword = await verify(user.password, parsed.data.password);
+  const isValidPassword = await verifyPassword(user.password, parsed.data.password);
 
   if (!isValidPassword) {
     throw new HttpError(401, "Invalid email or password");
@@ -141,19 +185,12 @@ export async function login(req: Request, res: Response) {
 }
 
 export async function githubLogin(req: Request, res: Response) {
-  const clientId = env.GITHUB_CLIENT_ID;
-  if (!clientId) {
-    throw new HttpError(500, "GITHUB_CLIENT_ID is not configured");
-  }
-  const state = crypto.randomBytes(32).toString("base64url");
-  const url = new URL("https://github.com/login/oauth/authorize");
-  url.searchParams.set("client_id", clientId);
-  url.searchParams.set("redirect_uri", redirectUri(req));
-  url.searchParams.set("scope", "read:user user:email repo");
-  url.searchParams.set("state", state);
+  res.redirect(beginGithubOAuth(req, res));
+}
 
-  res.cookie(oauthStateCookie, state, oauthCookieOptions());
-  res.redirect(url.toString());
+export async function linkGithub(req: AuthRequest, res: Response) {
+  if (!req.user) throw new HttpError(401, "Authentication required");
+  res.json({ authorizationUrl: beginGithubOAuth(req, res, req.user.id) });
 }
 
 export async function githubCallback(req: Request, res: Response) {
@@ -163,8 +200,19 @@ export async function githubCallback(req: Request, res: Response) {
   }
   const state = req.query.state;
   const expectedState = readCookie(req, oauthStateCookie);
+  const codeVerifier = readCookie(req, oauthVerifierCookie);
+  const linkToken = readCookie(req, oauthLinkCookie);
   res.clearCookie(oauthStateCookie, { path: "/api/auth/github" });
-  if (!state || typeof state !== "string" || !expectedState || state !== expectedState) {
+  res.clearCookie(oauthVerifierCookie, { path: "/api/auth/github" });
+  res.clearCookie(oauthLinkCookie, { path: "/api/auth/github" });
+  const linkUserId = readGithubLinkUserId(linkToken);
+  if (
+    !state ||
+    typeof state !== "string" ||
+    !expectedState ||
+    state !== expectedState ||
+    !codeVerifier
+  ) {
     throw new HttpError(400, "OAuth state is invalid");
   }
 
@@ -186,13 +234,14 @@ export async function githubCallback(req: Request, res: Response) {
       client_secret: clientSecret,
       code,
       redirect_uri: redirectUri(req),
+      code_verifier: codeVerifier,
     }),
   });
 
   if (!tokenRes.ok) {
     throw new HttpError(401, "Failed to exchange OAuth code with GitHub");
   }
-  const tokenData = githubTokenSchema.safeParse(await tokenRes.json());
+  const tokenData = githubOAuthTokenResponseSchema.safeParse(await tokenRes.json());
   if (!tokenData.success) {
     throw new HttpError(401, "Failed to get access token from GitHub");
   }
@@ -238,12 +287,35 @@ export async function githubCallback(req: Request, res: Response) {
     throw new HttpError(400, "GitHub account has no verified email address");
   }
 
-  const encryptedAccessToken = encryptOAuthToken(accessToken);
-  let user = await prisma.user.findUnique({
+  const tokenUpdate = githubOAuthTokenUpdate(tokenData.data);
+  const githubUser = await prisma.user.findUnique({
     where: { githubId },
   });
+  let user;
 
-  if (!user) {
+  if (linkUserId) {
+    const linkUser = await prisma.user.findUnique({ where: { id: linkUserId } });
+    if (!linkUser) {
+      throw new HttpError(401, "GitHub link intent is invalid or expired");
+    }
+    if (githubUser && githubUser.id !== linkUser.id) {
+      throw new HttpError(409, "This GitHub account is linked to another DiffGuard user");
+    }
+    if (linkUser.githubId && linkUser.githubId !== githubId) {
+      throw new HttpError(409, "Reconnect with the GitHub account already linked to this user");
+    }
+    user = await prisma.user.update({
+      where: { id: linkUser.id },
+      data: { githubId, ...tokenUpdate },
+    });
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: "user.github.linked",
+        metadata: { githubId },
+      },
+    });
+  } else if (!githubUser) {
     const existingEmailUser = await prisma.user.findUnique({
       where: { email },
     });
@@ -256,7 +328,7 @@ export async function githubCallback(req: Request, res: Response) {
         where: { id: existingEmailUser.id },
         data: {
           githubId,
-          githubAccessTokenCiphertext: encryptedAccessToken,
+          ...tokenUpdate,
         },
       });
     } else {
@@ -265,14 +337,14 @@ export async function githubCallback(req: Request, res: Response) {
           email,
           name,
           githubId,
-          githubAccessTokenCiphertext: encryptedAccessToken,
+          ...tokenUpdate,
         },
       });
     }
   } else {
     user = await prisma.user.update({
-      where: { id: user.id },
-      data: { githubAccessTokenCiphertext: encryptedAccessToken },
+      where: { id: githubUser.id },
+      data: tokenUpdate,
     });
   }
 

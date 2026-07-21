@@ -3,6 +3,7 @@ import { GithubAppError } from "../lib/github-app";
 import {
   analyzeGithubFiles,
   buildFailureTransition,
+  checkConclusion,
   classifyReviewFailure,
   retryDelayMilliseconds,
 } from "./review-processor";
@@ -26,6 +27,62 @@ function file(params: {
 }
 
 describe("review processing", () => {
+  const highConfidenceFinding = {
+    category: "SECURITY",
+    source: "DETERMINISTIC",
+    suppressed: false,
+    severity: "HIGH",
+    confidence: 0.95,
+    ruleId: "security.hardcoded-secret",
+    ruleVersion: "1.0.0",
+  } as any;
+
+  it("blocks only findings from rules proven eligible by the pilot", () => {
+    expect(checkConclusion({
+      state: "SUCCEEDED",
+      findings: [highConfidenceFinding],
+      mode: "ENFORCING",
+      enforceableRules: [{ ruleId: "security.hardcoded-secret", ruleVersion: "1.0.0" }],
+    })).toBe("failure");
+    expect(checkConclusion({
+      state: "SUCCEEDED",
+      findings: [highConfidenceFinding],
+      mode: "ENFORCING",
+      enforceableRules: [],
+    })).toBe("success");
+  });
+
+  it("never blocks on LLM-only findings", () => {
+    expect(checkConclusion({
+      state: "SUCCEEDED",
+      findings: [{ ...highConfidenceFinding, source: "LLM" }],
+      mode: "ENFORCING",
+      enforceableRules: [{ ruleId: "security.hardcoded-secret", ruleVersion: "1.0.0" }],
+    })).toBe("success");
+  });
+
+  it("never blocks on maintainability policy findings", () => {
+    expect(checkConclusion({
+      state: "SUCCEEDED",
+      findings: [{
+        ...highConfidenceFinding,
+        category: "POLICY",
+        ruleId: "policy.identifier-naming",
+      }],
+      mode: "ENFORCING",
+      enforceableRules: [{ ruleId: "policy.identifier-naming", ruleVersion: "1.0.0" }],
+    })).toBe("success");
+  });
+
+  it("does not reuse pilot evidence across rule versions", () => {
+    expect(checkConclusion({
+      state: "SUCCEEDED",
+      findings: [{ ...highConfidenceFinding, ruleVersion: "2.0.0" }],
+      mode: "ENFORCING",
+      enforceableRules: [{ ruleId: "security.hardcoded-secret", ruleVersion: "1.0.0" }],
+    })).toBe("success");
+  });
+
   it("reports explicit partial coverage while retaining available changed lines", () => {
     const analysis = analyzeGithubFiles({
       files: [

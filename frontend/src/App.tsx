@@ -21,8 +21,26 @@ type Repository = {
   llmReviewEnabled: boolean;
   llmModel: string;
   retentionDays: number;
+  ruleConfiguration?: RuleConfiguration;
   _count?: { reviewRuns: number };
   reviewRuns?: ReviewRun[];
+};
+
+type PathNamingConvention = "OFF" | "KEBAB_CASE" | "CAMEL_CASE" | "SNAKE_CASE";
+
+type MaintainabilityPolicy = {
+  enabled: boolean;
+  identifierNaming: "OFF" | "CAMEL_PASCAL";
+  fileNaming: PathNamingConvention;
+  folderNaming: PathNamingConvention;
+};
+
+type RuleConfiguration = {
+  enabledRuleIds?: string[];
+  severityThreshold?: string;
+  ignoredPaths?: string[];
+  suppressions?: Array<Record<string, unknown>>;
+  maintainability?: MaintainabilityPolicy;
 };
 
 type ReviewRun = {
@@ -43,6 +61,30 @@ type ReviewRun = {
   completedAt?: string | null;
 };
 
+type Finding = {
+  id: string;
+  ruleId: string;
+  source: string;
+  category: string;
+  severity: string;
+  confidence: number;
+  filePath: string;
+  lineNumber: number;
+  title: string;
+  evidence: string;
+  explanation: string;
+  remediation: string;
+  suppressed: boolean;
+  suppressionReason?: string | null;
+  pilotVerification?: "CONFIRMED" | "FALSE_POSITIVE" | null;
+  pilotVerifiedAt?: string | null;
+  pilotNotes?: string | null;
+};
+
+type ReviewRunDetail = ReviewRun & {
+  findings: Finding[];
+};
+
 type Metrics = {
   totalRuns: number;
   byState: Record<string, number>;
@@ -61,11 +103,37 @@ type EvidencePreview = {
 
 type RulePrecision = {
   ruleId: string;
+  ruleVersion: string;
   totalFindings: number;
   confirmedCount: number;
   falsePositiveCount: number;
   unverifiedCount: number;
   precision: number;
+};
+
+type PilotStatus = {
+  status: "COLLECTING" | "READY";
+  readyForEnforcement: boolean;
+  thresholds: {
+    minimumReviewedPullRequests: number;
+    minimumReliability: number;
+    minimumPrecision: number;
+    minimumVerifiedFindings: number;
+  };
+  reviewedPullRequestCount: number;
+  completedRunCount: number;
+  successfulRunCount: number;
+  partialRunCount: number;
+  failedRunCount: number;
+  skippedRunCount: number;
+  reliability: number;
+  eligibleRuleIds: string[];
+  eligibleRules: Array<{ ruleId: string; ruleVersion: string }>;
+  blockers: string[];
+  rules: Array<RulePrecision & {
+    verifiedFindingCount: number;
+    eligibleForEnforcement: boolean;
+  }>;
 };
 
 type AiReviewTestResult = {
@@ -86,6 +154,28 @@ type AuthResponse = {
   token: string;
 };
 
+const defaultMaintainabilityPolicy: MaintainabilityPolicy = {
+  enabled: false,
+  identifierNaming: "CAMEL_PASCAL",
+  fileNaming: "OFF",
+  folderNaming: "OFF",
+};
+
+class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+  ) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
 function apiPath(path: string) {
   return `${API_URL.replace(/\/?$/, "/")}${path.replace(/^\//, "")}`;
 }
@@ -97,10 +187,28 @@ function errorMessageFromResponse(data: unknown, fallback: string) {
     if (typeof record.error === "string") return record.error;
     if (typeof record.error === "object" && record.error !== null) {
       const error = record.error as Record<string, unknown>;
-      if (typeof error.message === "string") return error.message;
+      if (typeof error.message === "string") {
+        const details = error.details as { blockers?: unknown } | undefined;
+        const blockers = Array.isArray(details?.blockers)
+          ? details.blockers.filter((item): item is string => typeof item === "string")
+          : [];
+        return blockers.length > 0
+          ? `${error.message}: ${blockers.join(" ")}`
+          : error.message;
+      }
     }
   }
   return fallback;
+}
+
+function errorCodeFromResponse(data: unknown) {
+  if (typeof data !== "object" || data === null) return undefined;
+  const record = data as Record<string, unknown>;
+  if (typeof record.error !== "object" || record.error === null) return undefined;
+  const error = record.error as Record<string, unknown>;
+  if (typeof error.details !== "object" || error.details === null) return undefined;
+  const details = error.details as Record<string, unknown>;
+  return typeof details.code === "string" ? details.code : undefined;
 }
 
 async function readJsonResponse(response: Response) {
@@ -116,6 +224,7 @@ async function readJsonResponse(response: Response) {
 async function api<T>(path: string, token: string, options?: RequestInit): Promise<T> {
   const response = await fetch(apiPath(path), {
     ...options,
+    credentials: "include",
     headers: {
       "content-type": "application/json",
       Authorization: `Bearer ${token}`,
@@ -124,7 +233,11 @@ async function api<T>(path: string, token: string, options?: RequestInit): Promi
   });
   const data = await readJsonResponse(response);
   if (!response.ok) {
-    throw new Error(errorMessageFromResponse(data, `Request failed with ${response.status}`));
+    throw new ApiError(
+      errorMessageFromResponse(data, `Request failed with ${response.status}`),
+      response.status,
+      errorCodeFromResponse(data),
+    );
   }
   return data as T;
 }
@@ -140,6 +253,17 @@ function StatePill({ state }: { state: string }) {
           ? "bg-slate-200 text-slate-700"
           : "bg-blue-100 text-blue-800";
   return <span className={`rounded px-2 py-1 text-xs font-semibold ${tone}`}>{state}</span>;
+}
+
+function NamingConventionOptions() {
+  return (
+    <>
+      <option value="OFF">Off</option>
+      <option value="KEBAB_CASE">kebab-case</option>
+      <option value="CAMEL_CASE">camelCase</option>
+      <option value="SNAKE_CASE">snake_case</option>
+    </>
+  );
 }
 
 function reviewedPullRequestOptions(reviewRuns: ReviewRun[] | undefined) {
@@ -168,8 +292,17 @@ export default function App() {
   const [thesisRelevance, setThesisRelevance] = useState("");
   const [preview, setPreview] = useState<EvidencePreview | null>(null);
   const [pilotPrecision, setPilotPrecision] = useState<RulePrecision[]>([]);
+  const [pilotStatus, setPilotStatus] = useState<PilotStatus | null>(null);
+  const [reviewDetail, setReviewDetail] = useState<ReviewRunDetail | null>(null);
+  const [detailStatus, setDetailStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [verificationNotes, setVerificationNotes] = useState<Record<string, string>>({});
+  const [verifyingFindingId, setVerifyingFindingId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isTestingAiReview, setIsTestingAiReview] = useState(false);
+  const [githubReauthRequired, setGithubReauthRequired] = useState(false);
+  const [isReconnectingGithub, setIsReconnectingGithub] = useState(false);
+  const [repositorySyncState, setRepositorySyncState] = useState<"idle" | "refreshing" | "stale">("idle");
+  const [lastRepositoryRefreshAt, setLastRepositoryRefreshAt] = useState<Date | null>(null);
 
   const [discoveredRepos, setDiscoveredRepos] = useState<DiscoveredRepository[] | null>(null);
   const hasActiveReviewRuns = Boolean(selected?.reviewRuns?.some((run) =>
@@ -196,6 +329,7 @@ export default function App() {
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(errorMessageFromResponse(data, "GitHub sign-in failed"));
       setToken((data as AuthResponse).token);
+      setGithubReauthRequired(false);
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "GitHub sign-in failed");
     }
@@ -217,12 +351,26 @@ export default function App() {
   }, [token, selectedId]);
 
   useEffect(() => {
-    if (!token || !selectedId || discoveredRepos) return;
-    const intervalMs = hasActiveReviewRuns ? 3_000 : 10_000;
-    const interval = window.setInterval(() => {
-      void loadRepository(selectedId, { silent: true });
-    }, intervalMs);
-    return () => window.clearInterval(interval);
+    setReviewDetail(null);
+    setDetailStatus("idle");
+    setVerificationNotes({});
+    setRepositorySyncState("idle");
+    setLastRepositoryRefreshAt(null);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!token || !selectedId || discoveredRepos || !hasActiveReviewRuns) return;
+    let cancelled = false;
+    let timeoutId: number | undefined;
+    const poll = async () => {
+      await loadRepository(selectedId, { silent: true });
+      if (!cancelled) timeoutId = window.setTimeout(poll, 3_000);
+    };
+    timeoutId = window.setTimeout(poll, 3_000);
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
   }, [token, selectedId, discoveredRepos, hasActiveReviewRuns]);
 
   useEffect(() => {
@@ -252,6 +400,9 @@ export default function App() {
       setSelectedId((current) => current ?? data[0]?.id ?? null);
       setStatus("idle");
     } catch (err) {
+      if (err instanceof ApiError && err.code === "GITHUB_REAUTH_REQUIRED") {
+        setGithubReauthRequired(true);
+      }
       setStatus("error");
       setError(err instanceof Error ? err.message : "Unable to load repositories");
     }
@@ -260,20 +411,27 @@ export default function App() {
   async function loadRepository(id: string, options?: { silent?: boolean }) {
     if (!token) return;
     if (!options?.silent) setError("");
+    if (options?.silent) setRepositorySyncState("refreshing");
     try {
-      const [repository, metricData, precisionData] = await Promise.all([
+      const [repository, metricData, pilotData] = await Promise.all([
         api<Repository>(`api/repositories/${id}`, token),
         api<Metrics>(`api/repositories/${id}/metrics`, token),
-        api<RulePrecision[]>(`api/repositories/${id}/pilot/precision`, token),
+        api<PilotStatus>(`api/repositories/${id}/pilot/status`, token),
       ]);
       setSelected(repository);
       setMetrics(metricData);
-      setPilotPrecision(precisionData);
+      setPilotPrecision(pilotData.rules);
+      setPilotStatus(pilotData);
+      setRepositorySyncState("idle");
+      setLastRepositoryRefreshAt(new Date());
     } catch (err) {
-      if (!options?.silent) {
+      if (options?.silent) {
+        setRepositorySyncState("stale");
+      } else {
         setSelected(null);
         setMetrics(null);
         setPilotPrecision([]);
+        setPilotStatus(null);
         setError(err instanceof Error ? err.message : "Unable to load repository");
       }
     }
@@ -288,6 +446,9 @@ export default function App() {
       setDiscoveredRepos(data);
       setStatus("idle");
     } catch (err) {
+      if (err instanceof ApiError && err.code === "GITHUB_REAUTH_REQUIRED") {
+        setGithubReauthRequired(true);
+      }
       setStatus("error");
       setError(err instanceof Error ? err.message : "Unable to discover repositories");
     }
@@ -304,7 +465,24 @@ export default function App() {
       await loadRepositories();
       setDiscoveredRepos(null); // close discovery
     } catch (err) {
+      if (err instanceof ApiError && err.code === "GITHUB_REAUTH_REQUIRED") {
+        setGithubReauthRequired(true);
+      }
       setError(err instanceof Error ? err.message : "Unable to connect repository");
+    }
+  }
+
+  async function reconnectGithub() {
+    if (!token || isReconnectingGithub) return;
+    setIsReconnectingGithub(true);
+    try {
+      const result = await api<{ authorizationUrl: string }>("api/auth/github/link", token, {
+        method: "POST",
+      });
+      window.location.assign(result.authorizationUrl);
+    } catch (err) {
+      setIsReconnectingGithub(false);
+      setError(err instanceof Error ? err.message : "Unable to reconnect GitHub");
     }
   }
 
@@ -342,6 +520,20 @@ export default function App() {
     }
   }
 
+  async function updateMaintainabilityPolicy(next: Partial<MaintainabilityPolicy>) {
+    if (!selected) return;
+    await updateSettings({
+      ruleConfiguration: {
+        ...selected.ruleConfiguration,
+        maintainability: {
+          ...defaultMaintainabilityPolicy,
+          ...selected.ruleConfiguration?.maintainability,
+          ...next,
+        },
+      },
+    });
+  }
+
   async function rerun(id: string) {
     if (!token || !selected) return;
     try {
@@ -350,6 +542,50 @@ export default function App() {
       await loadRepository(selected.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to rerun review");
+    }
+  }
+
+  async function inspectReviewRun(id: string) {
+    if (!token) return;
+    setDetailStatus("loading");
+    try {
+      const detail = await api<ReviewRunDetail>(`api/review-runs/${id}`, token);
+      setReviewDetail(detail);
+      setVerificationNotes(Object.fromEntries(
+        detail.findings.map((finding) => [finding.id, finding.pilotNotes ?? ""]),
+      ));
+      setDetailStatus("idle");
+    } catch (err) {
+      setDetailStatus("error");
+      setError(err instanceof Error ? err.message : "Unable to load review findings");
+    }
+  }
+
+  async function verifyPilotFinding(
+    findingId: string,
+    verification: "CONFIRMED" | "FALSE_POSITIVE",
+  ) {
+    if (!token || !selected || !reviewDetail || verifyingFindingId) return;
+    setVerifyingFindingId(findingId);
+    try {
+      await api(`api/repositories/${selected.id}/findings/${findingId}/verify`, token, {
+        method: "PATCH",
+        body: JSON.stringify({
+          verification,
+          notes: verificationNotes[findingId] ?? "",
+        }),
+      });
+      await Promise.all([
+        inspectReviewRun(reviewDetail.id),
+        loadRepository(selected.id, { silent: true }),
+      ]);
+      showToast("success", verification === "CONFIRMED"
+        ? "Finding recorded as confirmed."
+        : "Finding recorded as a false positive.");
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Unable to verify finding");
+    } finally {
+      setVerifyingFindingId(null);
     }
   }
 
@@ -470,11 +706,13 @@ export default function App() {
     <main className="min-h-screen bg-[#f5f2ea] text-slate-950">
       {toast && (
         <div
+          aria-live="polite"
           className={`fixed right-4 top-4 z-50 max-w-md rounded border px-4 py-3 text-sm shadow-lg ${
             toast.tone === "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-800"
               : "border-red-200 bg-red-50 text-red-800"
           }`}
+          role="status"
         >
           {toast.message}
         </div>
@@ -488,6 +726,24 @@ export default function App() {
           <button className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold" onClick={() => setToken(null)}>Sign out</button>
         </div>
       </header>
+
+      {githubReauthRequired && (
+        <div className="border-b border-amber-300 bg-amber-50">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-6 py-3">
+            <p className="text-sm text-amber-950">
+              GitHub authorization expired or was revoked. Reconnect GitHub to discover or connect repositories.
+            </p>
+            <button
+              className="rounded bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              disabled={isReconnectingGithub}
+              onClick={() => void reconnectGithub()}
+              type="button"
+            >
+              {isReconnectingGithub ? "Connecting..." : "Reconnect GitHub"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="mx-auto grid max-w-7xl gap-6 px-6 py-6 lg:grid-cols-[280px_1fr]">
         <aside className="space-y-3">
@@ -554,6 +810,44 @@ export default function App() {
                 <div className="rounded border bg-white p-4"><p className="text-xs text-slate-600">Skipped files</p><p className="text-2xl font-black">{metrics?.skippedFileCount ?? 0}</p></div>
               </div>
 
+              {pilotStatus && (
+                <div className={`rounded border p-5 ${pilotStatus.readyForEnforcement ? "border-emerald-300 bg-emerald-50" : "border-amber-300 bg-amber-50"}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest text-slate-600">Advisory pilot</p>
+                      <h2 className="mt-1 text-lg font-black">
+                        {pilotStatus.readyForEnforcement ? "Evidence threshold met" : "Collecting evidence"}
+                      </h2>
+                    </div>
+                    <span className={`rounded px-2 py-1 text-xs font-bold ${pilotStatus.readyForEnforcement ? "bg-emerald-200 text-emerald-900" : "bg-amber-200 text-amber-900"}`}>
+                      {pilotStatus.status}
+                    </span>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <div className="rounded bg-white/70 p-3">
+                      <p className="text-xs text-slate-600">Distinct reviewed PRs</p>
+                      <p className="text-xl font-black">{pilotStatus.reviewedPullRequestCount} / {pilotStatus.thresholds.minimumReviewedPullRequests}</p>
+                    </div>
+                    <div className="rounded bg-white/70 p-3">
+                      <p className="text-xs text-slate-600">Full-coverage reliability</p>
+                      <p className="text-xl font-black">{(pilotStatus.reliability * 100).toFixed(1)}% / {(pilotStatus.thresholds.minimumReliability * 100).toFixed(0)}%</p>
+                    </div>
+                    <div className="rounded bg-white/70 p-3">
+                      <p className="text-xs text-slate-600">Eligible rule versions</p>
+                      <p className="text-xl font-black">{pilotStatus.eligibleRules.length}</p>
+                    </div>
+                  </div>
+                  {pilotStatus.blockers.length > 0 && (
+                    <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-amber-950">
+                      {pilotStatus.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                    </ul>
+                  )}
+                  <p className="mt-4 text-xs text-slate-600">
+                    Partial and failed analyses reduce reliability. Only eligible deterministic rules can fail an enforcing Check Run; AI findings remain advisory.
+                  </p>
+                </div>
+              )}
+
               {pilotPrecision.length > 0 && (
                 <div className="rounded border border-slate-200 bg-white p-5">
                   <h2 className="text-lg font-black">Pilot Precision by Rule</h2>
@@ -566,18 +860,28 @@ export default function App() {
                         <th className="p-3">False Pos.</th>
                         <th className="p-3">Unverified</th>
                         <th className="p-3">Precision</th>
+                        <th className="p-3">Gate</th>
                       </tr>
                     </thead>
                     <tbody>
                       {pilotPrecision.map((rule) => (
-                        <tr key={rule.ruleId} className="border-t">
-                          <td className="p-3 font-mono text-xs">{rule.ruleId}</td>
+                        <tr key={`${rule.ruleId}@${rule.ruleVersion}`} className="border-t">
+                          <td className="p-3 font-mono text-xs">{rule.ruleId}@{rule.ruleVersion}</td>
                           <td className="p-3">{rule.totalFindings}</td>
                           <td className="p-3 text-emerald-700">{rule.confirmedCount}</td>
                           <td className="p-3 text-red-700">{rule.falsePositiveCount}</td>
                           <td className="p-3 text-slate-500">{rule.unverifiedCount}</td>
                           <td className="p-3 font-semibold">
                             {(rule.precision * 100).toFixed(1)}%
+                          </td>
+                          <td className="p-3">
+                            {pilotStatus?.eligibleRules.some((eligible) =>
+                              eligible.ruleId === rule.ruleId && eligible.ruleVersion === rule.ruleVersion
+                            ) ? (
+                              <span className="font-semibold text-emerald-700">Eligible</span>
+                            ) : (
+                              <span className="text-slate-500">Advisory</span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -609,8 +913,11 @@ export default function App() {
                     Check Runs
                     <select className="mt-1 w-full rounded border px-3 py-2" value={selected.checkRunMode} onChange={(event) => void updateSettings({ checkRunMode: event.target.value as Repository["checkRunMode"] })}>
                       <option value="ADVISORY">Advisory</option>
-                      <option value="ENFORCING">Enforcing</option>
+                      <option value="ENFORCING" disabled={!pilotStatus?.readyForEnforcement && selected.checkRunMode !== "ENFORCING"}>Enforcing</option>
                     </select>
+                    {!pilotStatus?.readyForEnforcement && selected.checkRunMode === "ADVISORY" && (
+                      <span className="mt-1 block text-xs text-amber-700">Locked until pilot targets are met</span>
+                    )}
                   </label>
                   <label className="text-sm font-medium">
                     Retention days
@@ -630,9 +937,74 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="rounded border border-slate-200 bg-white p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-black">Maintainability Policies</h2>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Optional naming checks are advisory and never participate in the security enforcement gate.
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm font-semibold">
+                    <input
+                      checked={selected.ruleConfiguration?.maintainability?.enabled ?? false}
+                      onChange={(event) => void updateMaintainabilityPolicy({ enabled: event.target.checked })}
+                      type="checkbox"
+                    />
+                    Enable naming policies
+                  </label>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <label className="text-sm font-medium">
+                    Identifiers
+                    <select
+                      className="mt-1 w-full rounded border px-3 py-2 disabled:bg-slate-100"
+                      disabled={!(selected.ruleConfiguration?.maintainability?.enabled ?? false)}
+                      onChange={(event) => void updateMaintainabilityPolicy({ identifierNaming: event.target.value as MaintainabilityPolicy["identifierNaming"] })}
+                      value={selected.ruleConfiguration?.maintainability?.identifierNaming ?? "CAMEL_PASCAL"}
+                    >
+                      <option value="OFF">Off</option>
+                      <option value="CAMEL_PASCAL">camelCase / PascalCase</option>
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium">
+                    New files
+                    <select
+                      className="mt-1 w-full rounded border px-3 py-2 disabled:bg-slate-100"
+                      disabled={!(selected.ruleConfiguration?.maintainability?.enabled ?? false)}
+                      onChange={(event) => void updateMaintainabilityPolicy({ fileNaming: event.target.value as PathNamingConvention })}
+                      value={selected.ruleConfiguration?.maintainability?.fileNaming ?? "OFF"}
+                    >
+                      <NamingConventionOptions />
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium">
+                    New folders
+                    <select
+                      className="mt-1 w-full rounded border px-3 py-2 disabled:bg-slate-100"
+                      disabled={!(selected.ruleConfiguration?.maintainability?.enabled ?? false)}
+                      onChange={(event) => void updateMaintainabilityPolicy({ folderNaming: event.target.value as PathNamingConvention })}
+                      value={selected.ruleConfiguration?.maintainability?.folderNaming ?? "OFF"}
+                    >
+                      <NamingConventionOptions />
+                    </select>
+                  </label>
+                </div>
+              </div>
+
               <div className="rounded border border-slate-200 bg-white">
-                <div className="border-b p-4">
-                  <h2 className="text-lg font-black">Review Runs</h2>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+                  <div>
+                    <h2 className="text-lg font-black">Review Runs</h2>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {lastRepositoryRefreshAt ? `Last updated ${lastRepositoryRefreshAt.toLocaleTimeString()}` : "Waiting for repository data"}
+                    </p>
+                  </div>
+                  {hasActiveReviewRuns && (
+                    <span className={`rounded px-2 py-1 text-xs font-semibold ${repositorySyncState === "stale" ? "bg-amber-100 text-amber-900" : "bg-blue-100 text-blue-800"}`}>
+                      {repositorySyncState === "stale" ? "Live update failed · data may be stale" : repositorySyncState === "refreshing" ? "Updating…" : "Live updates active"}
+                    </span>
+                  )}
                 </div>
                 {selected.reviewRuns?.length === 0 ? (
                   <p className="p-4 text-sm text-slate-600">No review runs for this repository yet.</p>
@@ -659,11 +1031,20 @@ export default function App() {
                             <td className="p-3">
                               <span className="font-semibold">{run.llmState ?? "SKIPPED"}</span>
                               {run.llmState === "FAILED" && run.llmFailureMessage && (
-                                <p className="mt-1 max-w-xs text-xs text-red-700">{run.llmFailureMessage}</p>
+                                <>
+                                  <p className="mt-1 max-w-xs text-xs text-red-700">{run.llmFailureMessage}</p>
+                                  <p className="mt-1 max-w-xs text-xs text-slate-500">Deterministic review still completed.</p>
+                                </>
                               )}
                             </td>
                             <td className="p-3">
-                              <button className="rounded border px-3 py-1 text-xs font-semibold" onClick={() => void rerun(run.id)}>Rerun</button>
+                              <div className="flex flex-wrap gap-2">
+                                <button className="rounded border px-3 py-1 text-xs font-semibold" onClick={() => void inspectReviewRun(run.id)}>Inspect</button>
+                                <button className="rounded border px-3 py-1 text-xs font-semibold" onClick={() => void rerun(run.id)}>Rerun</button>
+                                {run.checkRunUrl && (
+                                  <a className="rounded border px-3 py-1 text-xs font-semibold text-emerald-700" href={run.checkRunUrl} target="_blank" rel="noreferrer">GitHub</a>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -672,6 +1053,86 @@ export default function App() {
                   </div>
                 )}
               </div>
+
+              {(detailStatus === "loading" || reviewDetail) && (
+                <div className="rounded border border-slate-200 bg-white p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-black">Pilot Finding Verification</h2>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {reviewDetail ? `PR #${reviewDetail.pullRequestNumber} · ${reviewDetail.headSha.slice(0, 8)}` : "Loading review findings..."}
+                      </p>
+                    </div>
+                    {reviewDetail && (
+                      <button className="rounded border px-3 py-1 text-xs font-semibold" onClick={() => setReviewDetail(null)}>Close</button>
+                    )}
+                  </div>
+                  {detailStatus === "loading" ? (
+                    <p className="mt-4 text-sm text-slate-600">Loading findings...</p>
+                  ) : reviewDetail?.findings.length === 0 ? (
+                    <p className="mt-4 rounded bg-slate-50 p-3 text-sm text-slate-600">This review run has no findings to classify.</p>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      {reviewDetail?.findings.map((finding) => (
+                        <article key={finding.id} className="rounded border border-slate-200 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="font-bold">{finding.title}</p>
+                              <p className="mt-1 font-mono text-xs text-slate-600">{finding.filePath}:{finding.lineNumber} · {finding.ruleId}</p>
+                            </div>
+                            <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">{finding.severity} · {Math.round(finding.confidence * 100)}%</span>
+                          </div>
+                          <p className="mt-3 text-sm"><span className="font-semibold">Evidence:</span> {finding.evidence}</p>
+                          <p className="mt-2 text-sm text-slate-700">{finding.explanation}</p>
+                          <p className="mt-2 text-sm text-slate-700"><span className="font-semibold">Remediation:</span> {finding.remediation}</p>
+                          {finding.suppressed ? (
+                            <p className="mt-3 rounded bg-slate-100 p-2 text-xs text-slate-600">Suppressed: {finding.suppressionReason ?? "No reason recorded"}. Suppressed findings are excluded from pilot precision.</p>
+                          ) : finding.category !== "SECURITY" || finding.source !== "DETERMINISTIC" ? (
+                            <p className="mt-3 rounded bg-blue-50 p-2 text-xs text-blue-800">This {finding.source.toLowerCase()} {finding.category.toLowerCase()} finding remains advisory and is excluded from the deterministic enforcement gate.</p>
+                          ) : (
+                            <div className="mt-4 border-t pt-4">
+                              <label className="block text-sm font-medium" htmlFor={`pilot-notes-${finding.id}`}>
+                                Verification notes (optional)
+                              </label>
+                              <textarea
+                                id={`pilot-notes-${finding.id}`}
+                                className="mt-1 min-h-20 w-full rounded border px-3 py-2 text-sm"
+                                maxLength={2000}
+                                value={verificationNotes[finding.id] ?? ""}
+                                onChange={(event) => setVerificationNotes((current) => ({ ...current, [finding.id]: event.target.value }))}
+                                placeholder="Record the code-review evidence for this decision."
+                              />
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <button
+                                  className="rounded bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                                  disabled={verifyingFindingId !== null}
+                                  onClick={() => void verifyPilotFinding(finding.id, "CONFIRMED")}
+                                  type="button"
+                                >
+                                  {verifyingFindingId === finding.id ? "Saving..." : "Confirm finding"}
+                                </button>
+                                <button
+                                  className="rounded bg-red-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                                  disabled={verifyingFindingId !== null}
+                                  onClick={() => void verifyPilotFinding(finding.id, "FALSE_POSITIVE")}
+                                  type="button"
+                                >
+                                  {verifyingFindingId === finding.id ? "Saving..." : "Mark false positive"}
+                                </button>
+                                {finding.pilotVerification && (
+                                  <span className="text-xs font-semibold text-slate-600">
+                                    Current: {finding.pilotVerification.replace("_", " ")}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="rounded border border-slate-200 bg-white p-5">
                 <h2 className="text-lg font-black">Save PR Evidence</h2>

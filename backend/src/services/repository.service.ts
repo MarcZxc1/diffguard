@@ -7,6 +7,7 @@ import {
   parseRuleConfiguration,
   type RepositoryRuleConfiguration,
 } from "./rule-engine";
+import { getPilotStatus, PilotReadinessError } from "./pilot.service";
 
 const repositorySettingsSchema = z.object({
   enabled: z.boolean().optional(),
@@ -102,9 +103,18 @@ export const repositoryService = {
     }
     const repository = await prisma.githubRepository.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, checkRunMode: true },
     });
     if (!repository) return null;
+    if (
+      parsed.data.checkRunMode === "ENFORCING" &&
+      repository.checkRunMode !== "ENFORCING"
+    ) {
+      const pilot = await getPilotStatus(id);
+      if (!pilot.readyForEnforcement) {
+        throw new PilotReadinessError(pilot.blockers);
+      }
+    }
     const data: Prisma.GithubRepositoryUpdateInput = {};
     if (parsed.data.enabled !== undefined) data.enabled = parsed.data.enabled;
     if (parsed.data.draftPullRequestPolicy !== undefined) {

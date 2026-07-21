@@ -1,6 +1,11 @@
 import { describe, test, expect } from "bun:test";
 import type { prisma as prismaClient } from "../lib/prisma";
-import { verifyFinding, computeRulePrecision } from "./pilot.service";
+import {
+  computePilotReadiness,
+  computeRulePrecision,
+  getPilotPrecisionByRule,
+  verifyFinding,
+} from "./pilot.service";
 
 describe("pilot finding verification", () => {
   test("rejects invalid verification status", () => {
@@ -71,6 +76,23 @@ describe("pilot finding verification", () => {
         },
       },
     });
+    expect(calls[1]).toEqual({
+      update: {
+        where: { id: "finding-1" },
+        data: {
+          pilotVerification: "CONFIRMED",
+          pilotVerifiedAt: expect.any(Date),
+          pilotVerifiedBy: "user-1",
+          pilotNotes: null,
+        },
+        select: {
+          id: true,
+          pilotVerification: true,
+          pilotVerifiedAt: true,
+          pilotNotes: true,
+        },
+      },
+    });
   });
 
   test("does not update or audit a finding outside the requested repository", async () => {
@@ -138,5 +160,100 @@ describe("pilot precision computation", () => {
   test("returns precision 0 when no findings are verified", () => {
     const precision = computeRulePrecision([]);
     expect(precision.precision).toBe(0);
+  });
+
+  test("uses only unsuppressed deterministic security findings and separates rule versions", async () => {
+    let query: unknown;
+    const database = {
+      finding: {
+        async findMany(input: unknown) {
+          query = input;
+          return [
+            { ruleId: "security.test", ruleVersion: "1.0.0", pilotVerification: "CONFIRMED" },
+            { ruleId: "security.test", ruleVersion: "2.0.0", pilotVerification: "FALSE_POSITIVE" },
+          ];
+        },
+      },
+    } as unknown as typeof prismaClient;
+
+    const rules = await getPilotPrecisionByRule("repo-1", database);
+
+    expect(query).toEqual({
+      where: {
+        reviewRun: { repositoryId: "repo-1" },
+        category: "SECURITY",
+        source: "DETERMINISTIC",
+        suppressed: false,
+      },
+      select: { ruleId: true, ruleVersion: true, pilotVerification: true },
+    });
+    expect(rules).toHaveLength(2);
+    expect(rules[0]).toMatchObject({ ruleVersion: "1.0.0", precision: 1 });
+    expect(rules[1]).toMatchObject({ ruleVersion: "2.0.0", precision: 0 });
+  });
+});
+
+describe("pilot readiness", () => {
+  const readyRuns = Array.from({ length: 5 }, (_, index) => ({
+    pullRequestNumber: index + 1,
+    state: "SUCCEEDED",
+  }));
+  const preciseRule = {
+    ruleId: "security.hardcoded-secret",
+    ruleVersion: "1.0.0",
+    totalFindings: 10,
+    confirmedCount: 9,
+    falsePositiveCount: 1,
+    unverifiedCount: 0,
+    precision: 0.9,
+  };
+
+  test("allows enforcement only when repository reliability and rule evidence meet targets", () => {
+    const result = computePilotReadiness({ runs: readyRuns, rules: [preciseRule] });
+
+    expect(result.status).toBe("READY");
+    expect(result.readyForEnforcement).toBe(true);
+    expect(result.eligibleRuleIds).toEqual(["security.hardcoded-secret"]);
+    expect(result.eligibleRules).toEqual([{
+      ruleId: "security.hardcoded-secret",
+      ruleVersion: "1.0.0",
+    }]);
+    expect(result.reliability).toBe(1);
+  });
+
+  test("keeps the pilot collecting when distinct PR coverage is too small", () => {
+    const result = computePilotReadiness({
+      runs: readyRuns.map((run) => ({ ...run, pullRequestNumber: 1 })),
+      rules: [preciseRule],
+    });
+
+    expect(result.readyForEnforcement).toBe(false);
+    expect(result.eligibleRuleIds).toEqual([]);
+    expect(result.blockers[0]).toContain("5 distinct pull requests");
+  });
+
+  test("treats partial and failed analysis as reliability misses", () => {
+    const result = computePilotReadiness({
+      runs: [
+        ...readyRuns.slice(0, 3),
+        { pullRequestNumber: 4, state: "PARTIAL" },
+        { pullRequestNumber: 5, state: "FAILED" },
+      ],
+      rules: [preciseRule],
+    });
+
+    expect(result.reliability).toBe(0.6);
+    expect(result.readyForEnforcement).toBe(false);
+    expect(result.blockers.some((blocker) => blocker.includes("95%"))).toBe(true);
+  });
+
+  test("requires enough verified findings at the precision target", () => {
+    const result = computePilotReadiness({
+      runs: readyRuns,
+      rules: [{ ...preciseRule, confirmedCount: 8, falsePositiveCount: 1, totalFindings: 9, precision: 8 / 9 }],
+    });
+
+    expect(result.readyForEnforcement).toBe(false);
+    expect(result.rules[0]?.eligibleForEnforcement).toBe(false);
   });
 });

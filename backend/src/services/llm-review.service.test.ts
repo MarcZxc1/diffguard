@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 const {
+  consumeAiHealthCheckRateLimit,
   runStructuredLlmReview,
   testOpenAiReviewConfiguration,
 } = await import("./llm-review.service");
@@ -80,5 +81,12 @@ describe("runStructuredLlmReview", () => {
       model: "gpt-test",
       message: "AI review is reachable for gpt-test.",
     });
+  });
+
+  it("rate limits repeated AI health checks without sharing limits between managers", () => {
+    expect(consumeAiHealthCheckRateLimit("manager-a:repo-a", 1_000)).toBe(0);
+    expect(consumeAiHealthCheckRateLimit("manager-a:repo-a", 2_000)).toBe(29_000);
+    expect(consumeAiHealthCheckRateLimit("manager-b:repo-a", 2_000)).toBe(0);
+    expect(consumeAiHealthCheckRateLimit("manager-a:repo-a", 31_000)).toBe(0);
   });
 });

@@ -93,8 +93,10 @@ describe("deterministic security rules", () => {
 
   it("registers each expected Phase 2 rule exactly once", () => {
     const ruleIds = deterministicRules.map((rule) => rule.id);
-    expect(new Set(ruleIds).size).toBe(8);
+    expect(new Set(ruleIds).size).toBe(10);
     expect(ruleIds).toContain("policy.source-change-without-tests");
+    expect(ruleIds).toContain("policy.identifier-naming");
+    expect(ruleIds).toContain("policy.repository-path-naming");
   });
 
   it("enforces each rule's supported file metadata", () => {
@@ -170,6 +172,121 @@ describe("deterministic security rules", () => {
     ]);
     expect(
       findings.some((finding) => finding.ruleId === "policy.source-change-without-tests"),
+    ).toBe(false);
+  });
+
+  it("keeps maintainability naming rules opt-in and advisory", () => {
+    const line: ChangedLine = {
+      filePath: "src/example.ts",
+      lineNumber: 3,
+      content: "const user_name = 'Ada';",
+      changeType: "added",
+    };
+    expect(
+      scan([line]).some((finding) => finding.ruleId === "policy.identifier-naming"),
+    ).toBe(false);
+
+    const findings = scan([line], {
+      maintainability: {
+        enabled: true,
+        identifierNaming: "CAMEL_PASCAL",
+        fileNaming: "OFF",
+        folderNaming: "OFF",
+      },
+    });
+    const naming = findings.find(
+      (finding) => finding.ruleId === "policy.identifier-naming",
+    );
+    expect(naming?.category).toBe("POLICY");
+    expect(naming?.title).toContain("camelCase");
+  });
+
+  it("accepts camelCase, PascalCase, and upper-snake constants", () => {
+    const findings = scan([
+      {
+        filePath: "src/example.ts",
+        lineNumber: 1,
+        content: "const userName = 'Ada';",
+        changeType: "added",
+      },
+      {
+        filePath: "src/example.ts",
+        lineNumber: 2,
+        content: "const MAX_RETRIES = 3;",
+        changeType: "added",
+      },
+      {
+        filePath: "src/example.ts",
+        lineNumber: 3,
+        content: "class ReviewWorker {}",
+        changeType: "added",
+      },
+      {
+        filePath: "src/example.ts",
+        lineNumber: 4,
+        content: "// const user_name is retained for migration documentation",
+        changeType: "added",
+      },
+    ], {
+      maintainability: {
+        enabled: true,
+        identifierNaming: "CAMEL_PASCAL",
+        fileNaming: "OFF",
+        folderNaming: "OFF",
+      },
+    });
+    expect(
+      findings.some((finding) => finding.ruleId === "policy.identifier-naming"),
+    ).toBe(false);
+  });
+
+  it("applies configured naming only to added or renamed source paths", () => {
+    const configuration = {
+      maintainability: {
+        enabled: true,
+        identifierNaming: "OFF",
+        fileNaming: "KEBAB_CASE",
+        folderNaming: "SNAKE_CASE",
+      },
+    };
+    const findings = scanPullRequest({
+      context: {
+        headSha: "abc123",
+        files: [
+          { filename: "featureModules/UserProfile.ts", status: "added" },
+          { filename: "legacyModules/UserProfile.ts", status: "modified" },
+        ],
+        changedLines: [{
+          filePath: "featureModules/UserProfile.ts",
+          lineNumber: 1,
+          content: "export const userName = 'Ada';",
+          changeType: "added",
+        }],
+      },
+      configuration,
+    });
+    const pathFindings = findings.filter(
+      (finding) => finding.ruleId === "policy.repository-path-naming",
+    );
+    expect(pathFindings).toHaveLength(1);
+    expect(pathFindings[0]?.title).toContain("File name");
+    expect(pathFindings[0]?.category).toBe("POLICY");
+
+    const compliant = scanPullRequest({
+      context: {
+        headSha: "def456",
+        files: [{ filename: "feature_modules/user-profile.ts", status: "added" }],
+        changedLines: [{
+          filePath: "feature_modules/user-profile.ts",
+          lineNumber: 1,
+          content: "export const userName = 'Ada';",
+          changeType: "added",
+        }],
+      },
+      configuration,
+    });
+    expect(
+      compliant.some((finding) => finding.ruleId === "policy.repository-path-naming"),
     ).toBe(false);
   });
 
