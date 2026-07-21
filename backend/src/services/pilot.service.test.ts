@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import type { prisma as prismaClient } from "../lib/prisma";
 import {
+  addEnforcementAvailability,
   computePilotReadiness,
   computeRulePrecision,
   getPilotPrecisionByRule,
@@ -255,5 +256,39 @@ describe("pilot readiness", () => {
 
     expect(result.readyForEnforcement).toBe(false);
     expect(result.rules[0]?.eligibleForEnforcement).toBe(false);
+  });
+
+  test("development bypass permits enforcement without changing real pilot evidence", () => {
+    const readiness = computePilotReadiness({
+      runs: readyRuns.slice(0, 2),
+      rules: [],
+    });
+    const result = addEnforcementAvailability(readiness, {
+      nodeEnv: "development",
+      developmentBypassEnabled: true,
+    });
+
+    expect(result.status).toBe("COLLECTING");
+    expect(result.readyForEnforcement).toBe(false);
+    expect(result.eligibleRules).toEqual([]);
+    expect(result.blockers.length).toBeGreaterThan(0);
+    expect(result.canEnableEnforcing).toBe(true);
+    expect(result.developmentBypass).toEqual({ enabled: true, active: true });
+    expect(result.effectiveEnforceableRules.length).toBeGreaterThan(0);
+    expect(result.effectiveEnforceableRules.every((rule) =>
+      rule.ruleId.startsWith("security.")
+    )).toBe(true);
+  });
+
+  test("uses only pilot-eligible rules when the bypass is disabled", () => {
+    const readiness = computePilotReadiness({ runs: readyRuns, rules: [preciseRule] });
+    const result = addEnforcementAvailability(readiness, {
+      nodeEnv: "development",
+      developmentBypassEnabled: false,
+    });
+
+    expect(result.canEnableEnforcing).toBe(true);
+    expect(result.developmentBypass).toEqual({ enabled: false, active: false });
+    expect(result.effectiveEnforceableRules).toEqual(result.eligibleRules);
   });
 });

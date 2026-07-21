@@ -114,6 +114,11 @@ type RulePrecision = {
 type PilotStatus = {
   status: "COLLECTING" | "READY";
   readyForEnforcement: boolean;
+  canEnableEnforcing: boolean;
+  developmentBypass: {
+    enabled: boolean;
+    active: boolean;
+  };
   thresholds: {
     minimumReviewedPullRequests: number;
     minimumReliability: number;
@@ -129,6 +134,7 @@ type PilotStatus = {
   reliability: number;
   eligibleRuleIds: string[];
   eligibleRules: Array<{ ruleId: string; ruleVersion: string }>;
+  effectiveEnforceableRules: Array<{ ruleId: string; ruleVersion: string }>;
   blockers: string[];
   rules: Array<RulePrecision & {
     verifiedFindingCount: number;
@@ -823,6 +829,12 @@ export default function App() {
                       {pilotStatus.status}
                     </span>
                   </div>
+                  {pilotStatus.developmentBypass.enabled && (
+                    <div className="mt-4 rounded border border-orange-300 bg-orange-100 p-3 text-sm text-orange-950" role="alert">
+                      <strong>Development enforcement bypass enabled.</strong>{" "}
+                      Real pilot status remains {pilotStatus.status}; production rejects this configuration.
+                    </div>
+                  )}
                   <div className="mt-4 grid gap-3 sm:grid-cols-3">
                     <div className="rounded bg-white/70 p-3">
                       <p className="text-xs text-slate-600">Distinct reviewed PRs</p>
@@ -913,10 +925,15 @@ export default function App() {
                     Check Runs
                     <select className="mt-1 w-full rounded border px-3 py-2" value={selected.checkRunMode} onChange={(event) => void updateSettings({ checkRunMode: event.target.value as Repository["checkRunMode"] })}>
                       <option value="ADVISORY">Advisory</option>
-                      <option value="ENFORCING" disabled={!pilotStatus?.readyForEnforcement && selected.checkRunMode !== "ENFORCING"}>Enforcing</option>
+                      <option value="ENFORCING" disabled={!pilotStatus?.canEnableEnforcing && selected.checkRunMode !== "ENFORCING"}>
+                        Enforcing{pilotStatus?.developmentBypass.active ? " (development bypass)" : ""}
+                      </option>
                     </select>
-                    {!pilotStatus?.readyForEnforcement && selected.checkRunMode === "ADVISORY" && (
+                    {!pilotStatus?.canEnableEnforcing && selected.checkRunMode === "ADVISORY" && (
                       <span className="mt-1 block text-xs text-amber-700">Locked until pilot targets are met</span>
+                    )}
+                    {pilotStatus?.developmentBypass.active && selected.checkRunMode === "ADVISORY" && (
+                      <span className="mt-1 block text-xs text-orange-700">Development bypass permits enforcing while pilot evidence is still collecting</span>
                     )}
                   </label>
                   <label className="text-sm font-medium">

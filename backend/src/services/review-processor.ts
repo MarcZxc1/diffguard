@@ -413,7 +413,7 @@ export async function processReviewRun(run: ReviewRunJob) {
       state: finalState,
       findings,
       mode: run.repository.checkRunMode,
-      enforceableRules: pilotStatus?.eligibleRules,
+      enforceableRules: pilotStatus?.effectiveEnforceableRules,
     }),
     annotations: checkAnnotations(findings),
   });

@@ -9,6 +9,27 @@ import {
 } from "./rule-engine";
 import { getPilotStatus, PilotReadinessError } from "./pilot.service";
 
+export function evaluateEnforcementTransition(params: {
+  currentMode: string;
+  requestedMode?: "ADVISORY" | "ENFORCING";
+  pilot?: {
+    canEnableEnforcing: boolean;
+    developmentBypass: { active: boolean };
+    blockers: string[];
+  };
+}) {
+  const isEnabling =
+    params.requestedMode === "ENFORCING" && params.currentMode !== "ENFORCING";
+  if (isEnabling && !params.pilot?.canEnableEnforcing) {
+    throw new PilotReadinessError(params.pilot?.blockers ?? [
+      "Pilot readiness could not be determined.",
+    ]);
+  }
+  return {
+    usedDevelopmentBypass: Boolean(isEnabling && params.pilot?.developmentBypass.active),
+  };
+}
+
 const repositorySettingsSchema = z.object({
   enabled: z.boolean().optional(),
   draftPullRequestPolicy: z.enum(["SKIP", "ANALYZE"]).optional(),
@@ -106,15 +127,18 @@ export const repositoryService = {
       select: { id: true, checkRunMode: true },
     });
     if (!repository) return null;
+    let pilot: Awaited<ReturnType<typeof getPilotStatus>> | undefined;
     if (
       parsed.data.checkRunMode === "ENFORCING" &&
       repository.checkRunMode !== "ENFORCING"
     ) {
-      const pilot = await getPilotStatus(id);
-      if (!pilot.readyForEnforcement) {
-        throw new PilotReadinessError(pilot.blockers);
-      }
+      pilot = await getPilotStatus(id);
     }
+    const transition = evaluateEnforcementTransition({
+      currentMode: repository.checkRunMode,
+      requestedMode: parsed.data.checkRunMode,
+      pilot,
+    });
     const data: Prisma.GithubRepositoryUpdateInput = {};
     if (parsed.data.enabled !== undefined) data.enabled = parsed.data.enabled;
     if (parsed.data.draftPullRequestPolicy !== undefined) {
@@ -149,6 +173,19 @@ export const repositoryService = {
       action: "repository.settings.updated",
       metadata: Object.keys(data),
     });
+    if (transition.usedDevelopmentBypass && pilot) {
+      await recordAuditLog({
+        user,
+        repositoryId: id,
+        action: "repository.enforcement.development_bypass",
+        metadata: {
+          previousMode: repository.checkRunMode,
+          nextMode: parsed.data.checkRunMode,
+          pilotStatus: pilot.status,
+          blockers: pilot.blockers,
+        },
+      });
+    }
     return updated;
   },
 
