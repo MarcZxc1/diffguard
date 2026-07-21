@@ -61,6 +61,12 @@ export const verifyFinding = {
         pilotVerifiedBy: user.id,
         pilotNotes: data.notes || null,
       },
+      select: {
+        id: true,
+        pilotVerification: true,
+        pilotVerifiedAt: true,
+        pilotNotes: true,
+      },
     });
 
     await recordAuditLog({

@@ -76,6 +76,23 @@ describe("pilot finding verification", () => {
         },
       },
     });
+    expect(calls[1]).toEqual({
+      update: {
+        where: { id: "finding-1" },
+        data: {
+          pilotVerification: "CONFIRMED",
+          pilotVerifiedAt: expect.any(Date),
+          pilotVerifiedBy: "user-1",
+          pilotNotes: null,
+        },
+        select: {
+          id: true,
+          pilotVerification: true,
+          pilotVerifiedAt: true,
+          pilotNotes: true,
+        },
+      },
+    });
   });
 
   test("does not update or audit a finding outside the requested repository", async () => {

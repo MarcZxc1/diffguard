@@ -9,9 +9,14 @@ import { reviewRunRouter } from "./routes/review-run.routes";
 import { repositoryRouter } from "./routes/repository.routes";
 import { userRouter } from "./routes/user.routes";
 import { env } from "./env";
+import { jsonBigIntReplacer } from "./lib/json";
 
 export function createApp() {
   const app = express();
+
+  // Prisma maps PostgreSQL BIGINT columns to JavaScript bigint values, which
+  // JSON.stringify cannot serialize without an explicit API-boundary policy.
+  app.set("json replacer", jsonBigIntReplacer);
 
   app.use(helmet());
   app.use(cors({ origin: new URL(env.FRONTEND_URL).origin, credentials: true }));

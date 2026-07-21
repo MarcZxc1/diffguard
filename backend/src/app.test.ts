@@ -64,6 +64,18 @@ async function invokePost(body: string, headers: Record<string, string> = {}) {
 }
 
 describe("GitHub webhook route", () => {
+  it("serializes Prisma BigInt values as decimal strings at the JSON boundary", () => {
+    const app = createApp();
+    const replacer = app.get("json replacer") as (
+      key: string,
+      value: unknown,
+    ) => unknown;
+
+    expect(JSON.stringify({ githubId: 9_007_199_254_740_993n }, replacer)).toBe(
+      '{"githubId":"9007199254740993"}',
+    );
+  });
+
   it("mounts the raw-body webhook router before the global JSON parser", () => {
     const app = createApp() as unknown as {
       router: { stack: Array<{ name: string }> };
