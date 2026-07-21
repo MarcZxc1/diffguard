@@ -2,13 +2,13 @@
 
 DiffGuard is a GitHub pull-request review and SAST bot. It verifies signed pull-request webhooks, detects security risks with deterministic rules and an LLM, and posts focused review comments on changed lines.
 
-## The problem we are solving
+## The problem I am solving
 
 Security review often arrives too late or produces so much noise that developers stop trusting it. Traditional scanners can report issues far away from the code a pull request actually changed, while AI-only reviewers may sound confident without being consistent enough to block a merge. Teams are then left with two poor choices: ignore the warnings or enforce them before anyone knows how reliable they are.
 
-We want security feedback to feel like a useful teammate in the pull-request conversation—not another dashboard full of unexplained alerts.
+I want security feedback to feel like a useful teammate in the pull-request conversation—not another dashboard full of unexplained alerts.
 
-## Our solution
+## My solution
 
 DiffGuard reviews the code that changed and puts focused findings directly on the relevant pull-request lines. Deterministic rules handle security checks that need predictable, repeatable behavior. Optional AI review adds context and suggestions, but stays advisory so an uncertain response cannot block someone’s work.
 
