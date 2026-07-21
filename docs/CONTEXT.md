@@ -74,10 +74,13 @@ GITHUB_OAUTH_TOKEN_ENCRYPTION_KEY=optional-32-plus-character-token-key
 FRONTEND_URL=http://localhost:5173
 OPENAI_API_KEY=optional-for-opted-in-llm-review
 OPENAI_MODEL=gpt-5.6-sol
+DIFFGUARD_DEV_ENFORCEMENT_BYPASS=false
 PORT=3000
 ```
 
 `FRONTEND_URL` is also the backend's exact credentialed CORS origin and OAuth callback destination. Production must set it to the deployed frontend origin rather than relying on the local default.
+
+For a local enforcement demonstration before the advisory evidence target is met, set `NODE_ENV=development` and `DIFFGUARD_DEV_ENFORCEMENT_BYPASS=true`, then restart the backend. The dashboard keeps showing the real pilot status and labels the bypass. Startup validation rejects this flag in production.
 
 `VITE_API_URL` is read by the frontend. It should include a trailing slash, for example `VITE_API_URL=http://localhost:3000/` in `frontend/.env`.
 
