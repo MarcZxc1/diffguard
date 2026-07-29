@@ -44,6 +44,14 @@ jobs:
         run: bun run build
         working-directory: backend
 
+      - name: Lint frontend
+        run: bun run lint
+        working-directory: frontend
+
+      - name: Test frontend
+        run: bun run test
+        working-directory: frontend
+
       - name: Build frontend
         run: bun run build
         working-directory: frontend

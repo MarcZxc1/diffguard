@@ -23,7 +23,7 @@ This bypass does not create pilot evidence and must not be used to claim that th
 
 ## Current target evidence snapshot
 
-A read-only audit of the public target repository on 2026-07-21 found DiffGuard checks associated with PRs [#4](https://github.com/MarcZxc1/diffguard/pull/4), [#5](https://github.com/MarcZxc1/diffguard/pull/5), [#6](https://github.com/MarcZxc1/diffguard/pull/6), [#7](https://github.com/MarcZxc1/diffguard/pull/7), and [#8](https://github.com/MarcZxc1/diffguard/pull/8). This does **not** complete the advisory pilot:
+A read-only pilot review found too few distinct representative runs and no sufficient set of human finding verdicts. This does **not** complete the advisory pilot:
 
 - PRs #5, #6, and #7 point at the same head commit and expose one inherited DiffGuard Check Run. That run was `PARTIAL`, analyzed 21 files, skipped 7 files, and reported no findings.
 - PRs #4 and #8 each had a full-coverage `SUCCEEDED` run with 5 reported findings, but both PRs contain the same six fixture blobs. Repeating an identical synthetic fixture does not provide independent target-repository evidence.
@@ -50,7 +50,7 @@ For each representative pull request:
 3. For each unsuppressed deterministic security finding, record **Confirm finding** or **Mark false positive**. Add a short code-review note when it will help another reviewer understand the decision.
 4. Investigate partial coverage, failed processing, retries, and skipped files rather than treating them as clean runs.
 5. Tune repository rules only with a documented reason. Do not suppress a real defect to improve the displayed precision.
-6. Use **Save PR Evidence** only for selected merged milestone PRs, verify the preview, and place the downloaded note in `11 Testing and QA/PR Reviews/`.
+6. Use **Save PR Evidence** only for selected merged milestone PRs, verify the preview, and place the downloaded note in the team’s approved documentation location.
 
 The **Advisory pilot** panel shows progress and exact blockers. The precision table is separated by rule version and marks only qualified versions as eligible.
 
@@ -77,4 +77,4 @@ Retain links and summaries, not full source patches:
 - the privacy review outcome; and
 - selected sanitized PR evidence exports.
 
-Never copy tokens, webhook bodies, raw patches, suspected secret values, private logs, or unnecessary personal data into pilot notes or thesis records.
+Never copy tokens, webhook bodies, raw patches, suspected secret values, private logs, or unnecessary personal data into pilot notes or supporting records.

@@ -93,10 +93,13 @@ describe("deterministic security rules", () => {
 
   it("registers each expected Phase 2 rule exactly once", () => {
     const ruleIds = deterministicRules.map((rule) => rule.id);
-    expect(new Set(ruleIds).size).toBe(10);
+    expect(new Set(ruleIds).size).toBe(13);
     expect(ruleIds).toContain("policy.source-change-without-tests");
     expect(ruleIds).toContain("policy.identifier-naming");
     expect(ruleIds).toContain("policy.repository-path-naming");
+    expect(ruleIds).toContain("policy.pull-request-metadata");
+    expect(ruleIds).toContain("policy.pull-request-size");
+    expect(ruleIds).toContain("policy.protected-change-without-tests");
   });
 
   it("enforces each rule's supported file metadata", () => {
@@ -288,6 +291,199 @@ describe("deterministic security rules", () => {
     expect(
       compliant.some((finding) => finding.ruleId === "policy.repository-path-naming"),
     ).toBe(false);
+  });
+
+  it("keeps repository governance disabled by default", () => {
+    const findings = scanPullRequest({
+      context: {
+        headSha: "abc123",
+        files: [{ filename: "src/feature.ts", status: "modified" }],
+        changedLines: [{
+          filePath: "src/feature.ts",
+          lineNumber: 1,
+          content: "export const feature = true;",
+          changeType: "added",
+        }],
+        pullRequest: {
+          title: "Small change",
+          body: null,
+        },
+      },
+    });
+
+    expect(
+      findings.some((finding) => finding.ruleId.startsWith("policy.pull-request-")),
+    ).toBe(false);
+    expect(
+      findings.some((finding) =>
+        finding.ruleId === "policy.protected-change-without-tests"
+      ),
+    ).toBe(false);
+  });
+
+  it("reports missing configured pull-request context without storing its body", () => {
+    const privateDescription = "internal implementation detail";
+    const findings = scanPullRequest({
+      context: {
+        headSha: "abc123",
+        files: [{ filename: "src/feature.ts", status: "modified" }],
+        changedLines: [{
+          filePath: "src/feature.ts",
+          lineNumber: 7,
+          content: "export const feature = true;",
+          changeType: "added",
+        }],
+        pullRequest: {
+          title: "Add feature",
+          body: `## Summary\n${privateDescription}`,
+        },
+      },
+      configuration: {
+        governance: {
+          enabled: true,
+          minimumDescriptionLength: 80,
+          requiredSections: ["Summary", "Testing"],
+          requireIssueReference: true,
+        },
+      },
+    });
+
+    const finding = findings.find(
+      (item) => item.ruleId === "policy.pull-request-metadata",
+    );
+    expect(finding?.category).toBe("POLICY");
+    expect(finding?.evidence).toContain("Testing");
+    expect(finding?.evidence).toContain("issue reference");
+    expect(JSON.stringify(finding)).not.toContain(privateDescription);
+  });
+
+  it("accepts configured pull-request sections and issue references", () => {
+    const findings = scanPullRequest({
+      context: {
+        headSha: "abc123",
+        files: [{ filename: "src/feature.ts", status: "modified" }],
+        changedLines: [{
+          filePath: "src/feature.ts",
+          lineNumber: 1,
+          content: "export const feature = true;",
+          changeType: "added",
+        }],
+        pullRequest: {
+          title: "Add feature (#42)",
+          body: [
+            "## Summary",
+            "This description contains enough neutral detail for a reviewer.",
+            "## Testing",
+            "Focused tests were run successfully.",
+          ].join("\n"),
+        },
+      },
+      configuration: {
+        governance: {
+          enabled: true,
+          minimumDescriptionLength: 60,
+          requiredSections: ["Summary", "Testing"],
+          requireIssueReference: true,
+        },
+      },
+    });
+
+    expect(
+      findings.some((finding) => finding.ruleId === "policy.pull-request-metadata"),
+    ).toBe(false);
+  });
+
+  it("reports pull requests above the configured changed-file limit", () => {
+    const findings = scanPullRequest({
+      context: {
+        headSha: "abc123",
+        files: [
+          { filename: "src/one.ts", status: "modified" },
+          { filename: "src/two.ts", status: "modified" },
+          { filename: "src/three.ts", status: "modified" },
+        ],
+        changedLines: [{
+          filePath: "src/one.ts",
+          lineNumber: 1,
+          content: "export const one = 1;",
+          changeType: "added",
+        }],
+      },
+      configuration: {
+        governance: {
+          enabled: true,
+          maxChangedFiles: 2,
+        },
+      },
+    });
+
+    const finding = findings.find(
+      (item) => item.ruleId === "policy.pull-request-size",
+    );
+    expect(finding?.category).toBe("POLICY");
+    expect(finding?.evidence).toContain("3 files");
+  });
+
+  it("requires configured test-path changes only when protected paths change", () => {
+    const configuration = {
+      governance: {
+        enabled: true,
+        protectedPaths: ["src/protected/**"],
+        requireTestsForProtectedPaths: true,
+        testPaths: ["test/**"],
+      },
+    };
+    const context = {
+      headSha: "abc123",
+      files: [{ filename: "src/protected/feature.ts", status: "modified" }],
+      changedLines: [{
+        filePath: "src/protected/feature.ts",
+        lineNumber: 4,
+        content: "export const feature = true;",
+        changeType: "added" as const,
+      }],
+    };
+    const missingTests = scanPullRequest({ context, configuration });
+    expect(
+      missingTests.some((finding) =>
+        finding.ruleId === "policy.protected-change-without-tests"
+      ),
+    ).toBe(true);
+
+    const withTests = scanPullRequest({
+      context: {
+        ...context,
+        files: [
+          ...context.files,
+          { filename: "test/feature.test.ts", status: "modified" },
+        ],
+      },
+      configuration,
+    });
+    expect(
+      withTests.some((finding) =>
+        finding.ruleId === "policy.protected-change-without-tests"
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects unsafe or unknown governance configuration", () => {
+    expect(() =>
+      scan([], {
+        governance: {
+          enabled: true,
+          requiredSections: ["## Unsafe"],
+        },
+      })
+    ).toThrow(RuleConfigurationError);
+    expect(() =>
+      scan([], {
+        governance: {
+          enabled: true,
+          unexpected: true,
+        },
+      })
+    ).toThrow(RuleConfigurationError);
   });
 
   it("supports ignored paths, severity thresholds, and reasoned suppressions", () => {

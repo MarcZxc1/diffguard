@@ -196,8 +196,8 @@ describe("GitHub webhook route", () => {
       repository: {
         id: 456,
         name: "diffguard",
-        full_name: "MarcZxc1/diffguard",
-        owner: { login: "MarcZxc1" },
+        full_name: "example-owner/diffguard",
+        owner: { login: "example-owner" },
       },
       pull_request: { number: 7, head: { sha: "abcdef123456" } },
     });
@@ -215,7 +215,7 @@ describe("GitHub webhook route", () => {
       body: { message: "Webhook queued", reviewRunId: "run-1", state: "QUEUED" },
     });
     expect(acceptedInput).toMatchObject({
-      repositoryFullName: "MarcZxc1/diffguard",
+      repositoryFullName: "example-owner/diffguard",
       pullRequestNumber: 7,
       headSha: "abcdef123456",
     });

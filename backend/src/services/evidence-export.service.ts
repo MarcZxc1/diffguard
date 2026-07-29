@@ -12,7 +12,7 @@ import { recordAuditLog } from "./repository-authorization.service";
 
 const exportInputSchema = z.object({
   pullRequestNumber: z.number().int().positive(),
-  thesisRelevance: z.string().max(2_000).default(""),
+  evidenceContext: z.string().max(2_000).default(""),
 }).strict();
 
 const rateLimit = new Map<string, { count: number; resetAt: number }>();
@@ -73,7 +73,7 @@ function renderMarkdown(params: {
   mergedAt?: string | null;
   exportedAt: string;
   reviewSummary: string;
-  thesisRelevance: string;
+  evidenceContext: string;
 }) {
   return `---\n` +
     `schema: "diffguard-pr-evidence/v1"\n` +
@@ -100,7 +100,7 @@ function renderMarkdown(params: {
     `| Merge commit | ${sanitizeScalar(params.mergeCommitSha ?? "not available")} |\n\n` +
     `## Description Snapshot\n\n${sanitizeScalar(params.description) || "_No description._"}\n\n` +
     `## DiffGuard Review Summary\n\n\`\`\`text\n${sanitizeScalar(params.reviewSummary) || "No DiffGuard review summary was available."}\n\`\`\`\n\n` +
-    `## Thesis Relevance\n\n${sanitizeScalar(params.thesisRelevance) || "_Not specified._"}\n\n` +
+    `## Evidence Context\n\n${sanitizeScalar(params.evidenceContext) || "_Not specified._"}\n\n` +
     `## Snapshot Note\n\nThis note is a sanitized snapshot exported by DiffGuard. GitHub remains the source of truth for the pull request.\n`;
 }
 
@@ -164,7 +164,7 @@ export const evidenceExportService = {
       mergedAt: pr.merged_at,
       exportedAt: new Date().toISOString(),
       reviewSummary,
-      thesisRelevance: data.thesisRelevance,
+      evidenceContext: data.evidenceContext,
     }).slice(0, 120_000);
     return {
       repository,

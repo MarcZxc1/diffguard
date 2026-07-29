@@ -1,6 +1,6 @@
 # DiffGuard
 
-DiffGuard is a GitHub pull-request review and SAST bot. It verifies signed pull-request webhooks, detects security risks with deterministic rules and an LLM, and posts focused review comments on changed lines.
+DiffGuard is a GitHub pull-request review and SAST bot. It verifies signed pull-request webhooks, detects security risks with deterministic rules and an optional LLM, evaluates opt-in repository governance policies, and posts focused review results.
 
 ## The problem I am solving
 
@@ -18,10 +18,25 @@ For demonstrations and local testing, a development-only bypass lets contributor
 
 ## Project status
 
-The current MVP foundation includes secure webhook signature verification and database-backed delivery deduplication. See [`docs/CONTEXT.md`](docs/CONTEXT.md) for the architecture, setup, API surface, and planned boundaries.
+The current MVP includes durable webhook processing, versioned deterministic review rules, optional structured AI review, GitHub Check Runs, precision-gated enforcement, repository-scoped operations, and generic opt-in pull-request governance. Governance configuration is stored per repository, while pull-request descriptions are evaluated transiently and are not persisted by the review workflow.
+
+DiffGuard remains advisory until repository-specific evidence demonstrates sufficient reliability and precision. See [`docs/CONTEXT.md`](docs/CONTEXT.md) for the architecture, setup, API surface, and boundaries.
 
 ## Development
 
 The backend uses Bun, Express, Prisma, PostgreSQL, and Redis. The frontend uses React, Vite, and Tailwind CSS.
 
-Read the guides in [`docs/`](docs/README.md) before contributing. Local secrets belong in `backend/.env` and must never be committed.
+To run it locally:
+
+```bash
+bun install
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+cd backend && docker compose up -d && bun run db:push
+cd ..
+bun dev
+```
+
+Then open `http://localhost:5173`. The example environment files contain placeholders; replace the local secrets before starting and never commit the resulting `.env` files.
+
+The friendly step-by-step version—including GitHub App setup, validation commands, and common fixes—is in [`docs/INSTALLATION.md`](docs/INSTALLATION.md). The rest of the project guides are indexed in [`docs/README.md`](docs/README.md).

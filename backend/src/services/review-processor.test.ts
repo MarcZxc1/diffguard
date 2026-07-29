@@ -5,6 +5,7 @@ import {
   buildFailureTransition,
   checkConclusion,
   classifyReviewFailure,
+  requiresPullRequestMetadata,
   retryDelayMilliseconds,
 } from "./review-processor";
 import { RuleConfigurationError } from "./rule-engine";
@@ -72,6 +73,16 @@ describe("review processing", () => {
       mode: "ENFORCING",
       enforceableRules: [{ ruleId: "policy.identifier-naming", ruleVersion: "1.0.0" }],
     })).toBe("success");
+  });
+
+  it("fetches pull-request metadata only for opted-in governance", () => {
+    expect(requiresPullRequestMetadata({})).toBe(false);
+    expect(requiresPullRequestMetadata({
+      governance: { enabled: true, maxChangedFiles: 20 },
+    })).toBe(false);
+    expect(requiresPullRequestMetadata({
+      governance: { enabled: true, requiredSections: ["Summary"] },
+    })).toBe(true);
   });
 
   it("does not reuse pilot evidence across rule versions", () => {

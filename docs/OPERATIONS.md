@@ -77,4 +77,4 @@ Switching the repository to `ENFORCING` does not modify GitHub branch protection
 
 Evidence export is explicit per PR and never automatic. Preview and download are authorized against the repository, rate-limited per user, and audited.
 
-Exported Markdown includes PR metadata, source URL, export timestamp, review summary, and user-provided thesis relevance. It excludes GitHub tokens, webhook payloads, full diffs, complete patches, suspected credential values, and private logs.
+Exported Markdown includes PR metadata, source URL, export timestamp, review summary, and user-provided evidence context. It excludes GitHub tokens, webhook payloads, full diffs, complete patches, suspected credential values, and private logs.

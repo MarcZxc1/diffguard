@@ -36,12 +36,62 @@ const maintainabilityPolicySchema = z.object({
   folderNaming: "OFF",
 });
 
+const boundedPathPatternSchema = z.string()
+  .trim()
+  .min(1)
+  .max(300)
+  .refine((value) => !/[\0-\x1f]/.test(value), "Path patterns cannot contain control characters");
+
+const governancePolicySchema = z.object({
+  enabled: z.boolean().default(false),
+  minimumDescriptionLength: z.number().int().min(0).max(5_000).default(0),
+  requiredSections: z.array(
+    z.string()
+      .trim()
+      .min(1)
+      .max(80)
+      .refine(
+        (value) => !/[\0-\x1f#<>]/.test(value),
+        "Required section names cannot contain markup or control characters",
+      ),
+  ).max(20).default([]),
+  requireIssueReference: z.boolean().default(false),
+  maxChangedFiles: z.number().int().min(0).max(3_000).default(0),
+  protectedPaths: z.array(boundedPathPatternSchema).max(100).default([]),
+  requireTestsForProtectedPaths: z.boolean().default(false),
+  testPaths: z.array(boundedPathPatternSchema).max(100).default([
+    "**/*.test.*",
+    "**/*.spec.*",
+    "tests/**",
+    "**/tests/**",
+    "__tests__/**",
+    "**/__tests__/**",
+  ]),
+}).strict().default({
+  enabled: false,
+  minimumDescriptionLength: 0,
+  requiredSections: [],
+  requireIssueReference: false,
+  maxChangedFiles: 0,
+  protectedPaths: [],
+  requireTestsForProtectedPaths: false,
+  testPaths: [
+    "**/*.test.*",
+    "**/*.spec.*",
+    "tests/**",
+    "**/tests/**",
+    "__tests__/**",
+    "**/__tests__/**",
+  ],
+});
+
 export const repositoryRuleConfigurationSchema = z.object({
   enabledRuleIds: z.array(z.string().min(1)).max(100).optional(),
   severityThreshold: findingSeveritySchema.default("LOW"),
   ignoredPaths: z.array(z.string().min(1).max(300)).max(100).default([]),
   suppressions: z.array(suppressionSchema).max(200).default([]),
   maintainability: maintainabilityPolicySchema,
+  governance: governancePolicySchema,
 }).strict();
 
 export type FindingSeverity = z.infer<typeof findingSeveritySchema>;
@@ -59,6 +109,11 @@ export type RuleContext = {
   files: ScanFile[];
   changedLines: ChangedLine[];
   maintainability?: RepositoryRuleConfiguration["maintainability"];
+  governance?: RepositoryRuleConfiguration["governance"];
+  pullRequest?: {
+    title: string;
+    body: string | null;
+  };
 };
 
 export type RuleCandidate = {
@@ -523,6 +578,170 @@ const repositoryPathNamingPolicyRule: DeterministicRule = {
   },
 };
 
+function policyAnchor(context: RuleContext, preferredFile?: string) {
+  const preferredLine = preferredFile
+    ? context.changedLines.find(
+      (line) => line.filePath === preferredFile && line.changeType === "added",
+    )
+    : undefined;
+  const addedLine = preferredLine ??
+    context.changedLines.find((line) => line.changeType === "added");
+  if (addedLine) {
+    return {
+      filePath: addedLine.filePath,
+      lineNumber: Math.max(1, addedLine.lineNumber),
+    };
+  }
+  const fallbackFile = context.files.find((file) => file.status !== "removed") ??
+    context.files[0];
+  if (!fallbackFile) return undefined;
+  return { filePath: fallbackFile.filename, lineNumber: 1 };
+}
+
+function normalizedHeading(value: string) {
+  return value.trim().replace(/^#+\s*/, "").replace(/\s+#+$/, "").trim().toLowerCase();
+}
+
+function markdownHeadings(body: string) {
+  return new Set(
+    body
+      .split(/\r?\n/)
+      .map((line) => line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/)?.[1])
+      .filter((heading): heading is string => Boolean(heading))
+      .map(normalizedHeading),
+  );
+}
+
+const pullRequestMetadataPolicyRule: DeterministicRule = {
+  id: "policy.pull-request-metadata",
+  version: "1.0.0",
+  category: "POLICY",
+  supportedFiles: ["source", "configuration"],
+  severity: "LOW",
+  confidence: 1,
+  scan(context) {
+    const policy = context.governance;
+    const pullRequest = context.pullRequest;
+    if (!policy?.enabled || !pullRequest) return [];
+
+    const body = pullRequest.body?.trim() ?? "";
+    const failures: string[] = [];
+    if (
+      policy.minimumDescriptionLength > 0 &&
+      body.length < policy.minimumDescriptionLength
+    ) {
+      failures.push(
+        `description is shorter than ${policy.minimumDescriptionLength} characters`,
+      );
+    }
+
+    if (policy.requiredSections.length > 0) {
+      const headings = markdownHeadings(body);
+      const missingSections = policy.requiredSections.filter(
+        (section) => !headings.has(normalizedHeading(section)),
+      );
+      if (missingSections.length > 0) {
+        failures.push(`missing Markdown sections: ${missingSections.join(", ")}`);
+      }
+    }
+
+    if (
+      policy.requireIssueReference &&
+      !/(?:^|[\s(])#\d+\b|https?:\/\/[^\s)]+\/issues\/\d+\b/i.test(
+        `${pullRequest.title}\n${body}`,
+      )
+    ) {
+      failures.push("missing an issue reference");
+    }
+
+    if (failures.length === 0) return [];
+    const anchor = policyAnchor(context);
+    if (!anchor) return [];
+    return [{
+      ...anchor,
+      title: "Pull request context does not meet repository policy",
+      evidence: `Configured governance checks found: ${failures.join("; ")}.`,
+      explanation:
+        "Complete pull-request context helps reviewers understand intent, verification, and traceability. This is advisory repository-policy feedback.",
+      remediation:
+        "Update the pull-request title or description to satisfy the configured requirements, or adjust the repository governance policy when an exception is intentional.",
+    }];
+  },
+};
+
+const pullRequestSizePolicyRule: DeterministicRule = {
+  id: "policy.pull-request-size",
+  version: "1.0.0",
+  category: "POLICY",
+  supportedFiles: ["source", "configuration"],
+  severity: "LOW",
+  confidence: 1,
+  scan(context) {
+    const policy = context.governance;
+    if (
+      !policy?.enabled ||
+      policy.maxChangedFiles === 0 ||
+      context.files.length <= policy.maxChangedFiles
+    ) {
+      return [];
+    }
+    const anchor = policyAnchor(context);
+    if (!anchor) return [];
+    return [{
+      ...anchor,
+      title: "Pull request exceeds the configured change-size limit",
+      evidence:
+        `This pull request changes ${context.files.length} files; the configured advisory limit is ${policy.maxChangedFiles}.`,
+      explanation:
+        "Smaller changes are generally easier to review and validate, but a larger change can still be intentional. This is advisory repository-policy feedback.",
+      remediation:
+        "Split unrelated work into focused pull requests, or document why the larger change should be reviewed as one unit.",
+    }];
+  },
+};
+
+const protectedChangeWithoutTestsPolicyRule: DeterministicRule = {
+  id: "policy.protected-change-without-tests",
+  version: "1.0.0",
+  category: "POLICY",
+  supportedFiles: ["source", "configuration"],
+  severity: "LOW",
+  confidence: 1,
+  scan(context) {
+    const policy = context.governance;
+    if (
+      !policy?.enabled ||
+      !policy.requireTestsForProtectedPaths ||
+      policy.protectedPaths.length === 0
+    ) {
+      return [];
+    }
+
+    const protectedFiles = context.files.filter((file) =>
+      policy.protectedPaths.some((pattern) => pathMatches(pattern, file.filename))
+    );
+    if (protectedFiles.length === 0) return [];
+    const hasTestChange = context.files.some((file) =>
+      file.status !== "removed" &&
+      policy.testPaths.some((pattern) => pathMatches(pattern, file.filename))
+    );
+    if (hasTestChange) return [];
+
+    const anchor = policyAnchor(context, protectedFiles[0]?.filename);
+    if (!anchor) return [];
+    return [{
+      ...anchor,
+      title: "Protected path changed without an accompanying test change",
+      evidence:
+        `${protectedFiles.length} changed file(s) match protected path policy, but no changed file matches the configured test paths.`,
+      explanation:
+        "Changes in repository-defined protected areas may warrant focused regression evidence. Existing tests may already provide coverage, so this remains advisory.",
+      remediation:
+        "Add or update a focused test, document why existing coverage is sufficient, or adjust the protected and test path patterns.",
+    }];
+  },
+};
+
 export const deterministicRules: readonly DeterministicRule[] = [
   hardcodedSecretRule,
   unsafeSqlRule,
@@ -534,6 +753,9 @@ export const deterministicRules: readonly DeterministicRule[] = [
   missingTestsPolicyRule,
   identifierNamingPolicyRule,
   repositoryPathNamingPolicyRule,
+  pullRequestMetadataPolicyRule,
+  pullRequestSizePolicyRule,
+  protectedChangeWithoutTestsPolicyRule,
 ];
 
 const severityRank: Record<FindingSeverity, number> = {
@@ -599,6 +821,7 @@ export function scanPullRequest(params: {
   const context: RuleContext = {
     ...params.context,
     maintainability: configuration.maintainability,
+    governance: configuration.governance,
     files: params.context.files.filter(
       (file) => !configuration.ignoredPaths.some((pattern) => pathMatches(pattern, file.filename)),
     ),

@@ -1,5 +1,63 @@
 # Development Log
 
+## 2026-07-30
+
+### Frontend production hardening
+
+- Replaced JavaScript-readable JWT persistence with a 15-minute HttpOnly, SameSite=Lax browser cookie while preserving Bearer authentication for API clients.
+- Added session bootstrap/logout routes, centralized protected-session expiry, and exact-origin validation for cookie-authenticated mutations.
+- Made repository loading abortable and latest-request-wins, cleared stale repository views on selection, removed all React hook dependency warnings, and serialized settings writes.
+- Changed retention to save on blur/Enter instead of every keystroke and preserved live review-run state through functional settings merges.
+- Ensured active governance rules are added to an existing explicit allowlist and surfaced advisory severity filtering.
+- Added accessible authentication errors and pending states, evidence labels, table captions, live status semantics, and review-detail focus restoration.
+- Split the former single-file UI into shared view-model types, API/policy helpers, and focused authentication, repository, settings, review, and evidence components.
+- Added Vitest, jsdom, React Testing Library, focused backend cookie-auth tests, and frontend CI lint/test gates.
+- Added research, implementation, and progress records under `docs/frontend-hardening/`.
+- Replaced the starter frontend README and added human-written installation instructions plus safe backend/frontend environment examples.
+
+### Frontend hardening verification
+
+- `cd backend && bun test`: 138 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd backend && bunx prisma validate`: passing.
+- `cd frontend && bun run test --run`: 8 passing across 3 files.
+- `cd frontend && bun run lint --max-warnings=0`: passing with zero warnings.
+- `cd frontend && bun run build`: passing.
+- `bun audit`: no vulnerabilities found after pinning patched transitive releases.
+- `git diff --check`: passing.
+- Private-identifier scan across maintained source and documentation: no matches.
+- The live accessibility diff could not run because its safe baseline workflow needs write access to `.git`; no stash, checkout, or user changes were disturbed.
+
+### Live accessibility validation
+
+- Added a reusable Playwright Core validator with generic local fixture data; no private repository or external credentials are required.
+- AccessLint scanned 94 WCAG rules on the sign-in page and authenticated dashboard at desktop and 320px widths with zero remaining violations.
+- Fixed primary-button audit compatibility with an explicit high-contrast background and fixed mobile grid overflow with shrinkable layout boundaries.
+- Confirmed 19/19 visible enabled controls in sequential keyboard order, visible focus indicators, no keyboard trap, correct detail focus entry/restoration, complete control names, table captions, coherent landmarks/headings, 200% text resizing, mobile reflow, and announced delayed loading.
+
+### Phase 9 generic repository governance
+
+- Added a strict, opt-in governance configuration for pull-request description length, required Markdown sections, issue references, advisory changed-file limits, protected paths, and test paths.
+- Added `policy.pull-request-metadata`, `policy.pull-request-size`, and `policy.protected-change-without-tests` as bounded advisory rules.
+- Kept repository-specific headings and paths in runtime configuration rather than source code, fixtures, or documentation.
+- Fetches authoritative PR metadata only when an enabled description, section, or issue-reference requirement needs it; path-only and size-only governance make no metadata request.
+- Processes PR title/body transiently and persists only bounded policy findings, with a regression test proving description content is not copied into findings.
+- Added a manager dashboard editor with neutral examples and an explicit Save action.
+- Separated security and policy counts in Check Run summaries and kept every governance finding outside inline security comments, pilot precision, and blocking conclusions.
+- Added research, implementation, progress, configuration, architecture, roadmap, and walkthrough documentation.
+
+### Phase 9 verification
+
+- `cd backend && bun test`: 133 passing, 0 failing.
+- `cd backend && bun run typecheck`: passing.
+- `cd backend && bun run build`: passing.
+- `cd backend && bun run db:validate`: passing.
+- `cd frontend && bun run build`: passing.
+- `cd frontend && bun run lint`: passing with the three pre-existing `react-hooks/exhaustive-deps` warnings in `App.tsx`.
+- `git diff --check`: passing.
+- Private-identifier scan across maintained source and documentation: no matches.
+
 ## 2026-07-21
 
 ### Phase 7.1 completion and Phase 8 maintainability policies
@@ -181,7 +239,7 @@
 
 - Installed the `diffguard-development` and `github-webhook-debugging` Codex skills.
 - Initialized the Git repository, added a safe root `.gitignore` and README, and configured the `main` branch and GitHub remote.
-- Corrected the initial commit author identity to `MarcZxc1` and amended the message to `Add DiffGuard MVP webhook foundation`.
+- Corrected the initial commit author metadata and clarified the foundation commit message.
 - Implemented Phase 1 webhook delivery protection:
   - Raw HMAC SHA-256 verification remains before JSON parsing.
   - Only `pull_request.opened` and `pull_request.synchronize` are accepted.

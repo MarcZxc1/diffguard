@@ -36,7 +36,7 @@ describe("github review client", () => {
     };
 
     const result = await fetchGithubPullRequestFiles({
-      repository: "MarcZxc1/diffguard",
+      repository: "example-owner/diffguard",
       pullRequestNumber: 1,
       token: "mock-token",
       fetchImpl,
@@ -115,7 +115,7 @@ describe("github review client", () => {
     };
 
     const commentId = await postGithubReviewComment({
-      repository: "MarcZxc1/diffguard",
+      repository: "example-owner/diffguard",
       pullRequestNumber: 1,
       token: "mock-token",
       commitId: "abc123",

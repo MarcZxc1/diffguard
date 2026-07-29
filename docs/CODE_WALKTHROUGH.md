@@ -44,13 +44,14 @@ This guide explains the role of every maintained source file. Read the source be
 
 ## Controllers, services, and middleware
 
-- `backend/src/controllers/auth.controller.ts`: Zod validates request JSON, Argon2 hashes or verifies passwords, starts GitHub OAuth with state and S256 PKCE protection, exchanges GitHub codes, links or creates OAuth users, records one-time login exchange codes, and signs backend JWTs. Login intentionally uses the same error for an unknown email and wrong password so callers cannot enumerate accounts.
+- `backend/src/lib/auth-session.ts`: creates the short-lived backend JWT and sets or clears its HttpOnly browser cookie with the production security attributes in one place.
+- `backend/src/controllers/auth.controller.ts`: Zod validates request JSON, Argon2 hashes or verifies passwords, starts GitHub OAuth with state and S256 PKCE protection, exchanges GitHub codes, links or creates OAuth users, records one-time login exchange codes, and starts the browser session. Login intentionally uses the same error for an unknown email and wrong password so callers cannot enumerate accounts.
 - `backend/src/controllers/user.controller.ts`: validates the admin create-user body and delegates all data work to `userService`.
 - `backend/src/services/user.service.ts`: caches a public projection of the user list for 60 seconds. Admin creation hashes the required password, persists it, returns only public fields, and removes the cache so the next list is fresh.
 - `backend/src/services/user.service.test.ts`: verifies that the admin-supplied password is transformed before persistence.
 - `backend/src/services/github-webhook-delivery.service.ts`: transactionally upserts installation/repository identity and creates a unique delivery plus queued review run. It respects enabled state, returns the current state for duplicates, and atomically requeues a recorded retryable failure when attempts remain.
 - `backend/src/services/review-worker.ts`: polls the durable queue, atomically claims one due run, heartbeats the attempt, recovers abandoned work, and delegates processing. Attempt-count guards prevent an expired worker from overwriting a newer claim.
-- `backend/src/services/review-processor.ts`: exchanges the installation token, publishes Check Run lifecycle state, fetches/assesses patches, runs the configuration snapshot, optionally runs fail-open structured LLM review, persists findings, deduplicates bounded comments, completes clean/partial runs, and records bounded retry or sanitized terminal failure state.
+- `backend/src/services/review-processor.ts`: exchanges the installation token, publishes Check Run lifecycle state, fetches/assesses patches, conditionally fetches transient PR metadata for opted-in governance, runs the configuration snapshot, optionally runs fail-open structured LLM review, persists findings, deduplicates bounded comments, completes clean/partial runs, and records bounded retry or sanitized terminal failure state.
 - `backend/src/services/llm-review.service.ts`: builds bounded redacted added-line context, calls the OpenAI Responses API only for opted-in repositories with credentials configured, validates strict structured output with Zod, rejects invalid locations, fails open, and exposes a synthetic no-code OpenAI health check for dashboard testing.
 - `backend/src/services/review-run.service.ts`: selects the public operational view of a review run and converts GitHub bigint IDs to JSON-safe strings.
 - `backend/src/services/repository.service.ts`: validates and persists repository settings, rule configuration, metrics, manual reruns, retention pruning, and repository dashboard projections including sanitized LLM failure messages.
@@ -69,23 +70,30 @@ This guide explains the role of every maintained source file. Read the source be
 - `backend/src/lib/github-webhook.test.ts`: creates a signature using the same crypto primitive and verifies acceptance/rejection cases. These tests protect the raw signature contract.
 - `backend/src/lib/github-app.test.ts`: verifies App JWT claims/signing, installation-token request headers, and failed or malformed GitHub responses using a mocked fetch.
 - `backend/src/lib/diff-parser.ts`: maps unified patch hunks to added, removed, and context lines with new-file line numbers.
-- `backend/src/lib/github-review.ts`: follows bounded file/comment pagination, validates and size-bounds GitHub responses, detects incomplete patch coverage, finds HMAC-authenticated fingerprint markers, posts right-side review comments, creates/updates Check Runs, fetches PR metadata for evidence export, and uses request timeouts.
-- `backend/src/services/rule-engine.ts`: defines the versioned deterministic rule contract, configuration schema, path/severity/suppression controls, stable fingerprints, seven security rule families, and three separate repository-policy rules, including opt-in identifier and repository-path naming checks.
+- `backend/src/lib/github-review.ts`: follows bounded file/comment pagination, validates and size-bounds GitHub responses, detects incomplete patch coverage, finds HMAC-authenticated fingerprint markers, posts right-side review comments, creates/updates Check Runs, fetches validated PR metadata for evidence export and opt-in governance, and uses request timeouts.
+- `backend/src/services/rule-engine.ts`: defines the versioned deterministic rule contract, strict configuration schema, path/severity/suppression controls, stable fingerprints, seven security rule families, and six separate repository-policy rules. Opt-in policies cover naming, PR context, advisory change size, and protected-path test evidence without participating in security enforcement.
 - `backend/src/lib/github-review.test.ts`: verifies multi-page files, pagination limits, patch coverage, external comment deduplication, publication payloads, and markers with mocked HTTP.
 - `backend/src/services/github-webhook-delivery.service.test.ts`: verifies atomic enqueue ordering, disabled repositories, and retrying a recorded failure.
-- `backend/src/services/review-processor.test.ts`: verifies partial coverage, sanitized failure classification, backoff, and attempt exhaustion.
-- `backend/src/services/rule-engine.test.ts`: provides positive, negative, removed-line boundary, redaction, policy, configuration, suppression, and fingerprint fixtures.
+- `backend/src/services/review-processor.test.ts`: verifies partial coverage, sanitized failure classification, backoff, attempt exhaustion, and governance metadata opt-in.
+- `backend/src/services/rule-engine.test.ts`: provides positive, negative, removed-line boundary, redaction, governance privacy, policy, configuration, suppression, and fingerprint fixtures.
 - `backend/src/payload.json`: a sample pull-request payload. Treat it as bytes when generating a local signature; reformatting it changes the signature.
 - `backend/scripts/test-github-webhook.fish`: creates a signed local webhook request from the sample payload, so manual testing does not depend on copying a multiline curl command correctly.
 
 ## Frontend
 
-- `frontend/package.json`: Vite development, build, preview, and Oxlint commands.
-- `frontend/vite.config.ts`: configures Vite and the React plugin.
+- `frontend/package.json`: Vite development/build/preview, Oxlint, and Vitest commands.
+- `frontend/vite.config.ts`: configures Vite, React, and the jsdom test environment.
 - `frontend/tsconfig*.json`: separates browser TypeScript settings from Vite/Node configuration.
 - `frontend/index.html`: Vite's HTML shell; `#root` is where React renders.
 - `frontend/src/main.tsx`: creates the React root and wraps the app in `StrictMode`, which helps surface unsafe development behavior.
-- `frontend/src/App.tsx`: exchanges GitHub OAuth callback codes for backend JWTs, stores the JWT in `localStorage`, presents a reconnect path for expired/revoked GitHub grants, lists and connects authorized repositories, polls active review runs with stale-state feedback, shows LLM and pilot readiness status, configures opt-in naming policies, supports finding verification, triggers reruns, and previews/downloads sanitized PR evidence Markdown.
+- `frontend/src/lib/api.ts`: sends credentialed API requests through the HttpOnly browser session and broadcasts protected-session expiry from one response boundary.
+- `frontend/src/lib/governance-policy.ts`: defines generic governance defaults, active rule IDs, explicit-allowlist merging, and severity-filter warnings.
+- `frontend/src/lib/review-runs.ts`: contains reusable review-run selection helpers.
+- `frontend/src/types.ts`: centralizes frontend API view models so components do not redefine contracts.
+- `frontend/src/components/`: contains the authentication screen and focused repository, settings, governance, review-run, finding-detail, and evidence-export panels.
+- `frontend/src/components/GovernancePolicySettings.tsx`: owns the synchronized governance draft form, save status, allowlist explanation, and advisory severity warning.
+- `frontend/src/App.tsx`: bootstraps the backend session, removes legacy browser token storage, exchanges GitHub OAuth codes, presents reconnect and expiry paths, uses abortable latest-request-wins repository loading, serializes settings writes, polls active runs, supports finding verification and reruns, and previews/downloads sanitized evidence Markdown.
+- `frontend/src/*.test.tsx` and `frontend/src/lib/*.test.ts`: cover accessible authentication failures, late repository responses, cookie API behavior, and governance configuration.
 - `frontend/src/index.css`: imports Tailwind CSS.
 - `frontend/src/App.css`: leftover Vite starter styles. `App.tsx` uses Tailwind utility classes instead, so remove this file and import only when the final UI no longer needs it.
 - `frontend/src/assets/*` and `frontend/public/*`: starter images/icons; preserve only assets used by the final product.

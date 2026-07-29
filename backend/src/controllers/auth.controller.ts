@@ -7,6 +7,11 @@ import { HttpError } from "../middlewares/error.middleware";
 import { prisma } from "../lib/prisma";
 import { env } from "../env";
 import {
+  clearAuthSession,
+  readCookie,
+  setAuthSession,
+} from "../lib/auth-session";
+import {
   createPkcePair,
   githubOAuthTokenResponseSchema,
   githubOAuthTokenUpdate,
@@ -50,10 +55,6 @@ const oauthStateCookie = "diffguard_oauth_state";
 const oauthVerifierCookie = "diffguard_oauth_verifier";
 const oauthLinkCookie = "diffguard_oauth_link";
 
-function jwtForUser(user: { id: string; role: string }) {
-  return sign({ sub: user.id, role: user.role }, JWT_SECRET!, { expiresIn: "7d" });
-}
-
 function oauthCookieOptions() {
   return {
     httpOnly: true,
@@ -62,16 +63,6 @@ function oauthCookieOptions() {
     path: "/api/auth/github",
     maxAge: 10 * 60 * 1000,
   };
-}
-
-function readCookie(req: Request, name: string) {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) return undefined;
-  return cookieHeader
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${name}=`))
-    ?.slice(name.length + 1);
 }
 
 function redirectUri(req: Request) {
@@ -147,11 +138,10 @@ export async function register(req: Request, res: Response) {
     },
   });
 
-  const token = sign({ sub: user.id, role: user.role }, JWT_SECRET!, { expiresIn: "15m" });
+  setAuthSession(res, user);
 
   res.status(201).json({
     user: { id: user.id, email: user.email, role: user.role },
-    token,
   });
 }
 
@@ -176,12 +166,21 @@ export async function login(req: Request, res: Response) {
     throw new HttpError(401, "Invalid email or password");
   }
 
-  const token = sign({ sub: user.id, role: user.role }, JWT_SECRET!, { expiresIn: "15m" });
+  setAuthSession(res, user);
 
   res.json({
     user: { id: user.id, email: user.email, role: user.role },
-    token,
   });
+}
+
+export function session(req: AuthRequest, res: Response) {
+  if (!req.user) throw new HttpError(401, "Authentication required");
+  res.json({ user: req.user });
+}
+
+export function logout(_req: Request, res: Response) {
+  clearAuthSession(res);
+  res.status(204).send();
 }
 
 export async function githubLogin(req: Request, res: Response) {
@@ -386,8 +385,6 @@ export async function exchangeGithubOAuthCode(req: Request, res: Response) {
   if (updated.count !== 1) {
     throw new HttpError(401, "OAuth exchange code is invalid or expired");
   }
-  res.json({
-    user: exchange.user,
-    token: jwtForUser(exchange.user),
-  });
+  setAuthSession(res, exchange.user);
+  res.json({ user: exchange.user });
 }

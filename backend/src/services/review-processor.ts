@@ -10,6 +10,7 @@ import {
   assessGithubFileCoverage,
   createOrUpdateGithubCheckRun,
   fetchGithubPullRequestFiles,
+  fetchGithubPullRequestMetadata,
   findGithubReviewCommentByFingerprint,
   formatRuleFindingComment,
   postGithubReviewComment,
@@ -20,6 +21,7 @@ import { prisma } from "../lib/prisma";
 import {
   RuleConfigurationError,
   deterministicRules,
+  parseRuleConfiguration,
   scanPullRequest,
   type RuleFinding,
 } from "./rule-engine";
@@ -58,6 +60,15 @@ export type FileAnalysis = {
 };
 
 export class ReviewLeaseLostError extends Error {}
+
+export function requiresPullRequestMetadata(configuration: unknown) {
+  const governance = parseRuleConfiguration(configuration).governance;
+  return governance.enabled && (
+    governance.minimumDescriptionLength > 0 ||
+    governance.requiredSections.length > 0 ||
+    governance.requireIssueReference
+  );
+}
 
 async function assertReviewLease(run: ReviewRunJob) {
   const active = await prisma.reviewRun.count({
@@ -179,6 +190,10 @@ function summarizeReview(params: {
     .map((severity) => `${severity}: ${severityCounts[severity]}`)
     .join(", ") || "none";
   const ruleVersions = deterministicRules.map((rule) => `${rule.id}@${rule.version}`).join(", ");
+  const securityFindingCount = params.findings.filter(
+    (finding) => finding.category === "SECURITY",
+  ).length;
+  const policyFindingCount = params.findings.length - securityFindingCount;
   const llmCoverage = params.llmState === "FAILED"
     ? "failed open; deterministic checks completed"
     : params.llmState === "SUCCEEDED"
@@ -188,9 +203,10 @@ function summarizeReview(params: {
     `State: ${params.state}`,
     `Analyzed files: ${params.analyzedFileCount}`,
     `Skipped files: ${params.skippedFileCount}`,
-    `Findings: ${params.findings.length} (${counts})`,
+    `Findings: ${params.findings.length} (${counts}; security: ${securityFindingCount}, policy: ${policyFindingCount})`,
     `Deterministic rules: ${ruleVersions}`,
     `LLM review: ${llmCoverage}.`,
+    "Repository policy findings are advisory and do not affect the security conclusion.",
     params.limitation ??
       "Limitations: deterministic rules are focused heuristics; branch protection remains advisory until pilot precision is measured.",
   ].join("\n");
@@ -299,11 +315,21 @@ export async function processReviewRun(run: ReviewRunJob) {
     title: "DiffGuard analysis in progress",
     summary: "DiffGuard is fetching changed files and running configured review rules.",
   });
-  const fetched = await fetchGithubPullRequestFiles({
-    repository: run.repository.fullName,
-    pullRequestNumber: run.pullRequestNumber,
-    token: installationToken.token,
-  });
+  const governanceEnabled = requiresPullRequestMetadata(run.ruleConfiguration);
+  const [fetched, pullRequestMetadata] = await Promise.all([
+    fetchGithubPullRequestFiles({
+      repository: run.repository.fullName,
+      pullRequestNumber: run.pullRequestNumber,
+      token: installationToken.token,
+    }),
+    governanceEnabled
+      ? fetchGithubPullRequestMetadata({
+        repository: run.repository.fullName,
+        pullRequestNumber: run.pullRequestNumber,
+        token: installationToken.token,
+      })
+      : Promise.resolve(undefined),
+  ]);
   const analysis = analyzeGithubFiles(fetched);
   const deterministicFindings = scanPullRequest({
     context: {
@@ -313,6 +339,14 @@ export async function processReviewRun(run: ReviewRunJob) {
         status: file.status,
       })),
       changedLines: analysis.changedLines,
+      ...(pullRequestMetadata
+        ? {
+          pullRequest: {
+            title: pullRequestMetadata.title,
+            body: pullRequestMetadata.body,
+          },
+        }
+        : {}),
     },
     configuration: run.ruleConfiguration,
   });

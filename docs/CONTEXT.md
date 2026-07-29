@@ -2,7 +2,7 @@
 
 ## Purpose
 
-DiffGuard is a focused GitHub pull-request security assistant. GitHub sends a signed `pull_request` webhook, the backend verifies and durably queues it, then a database-backed worker fetches every supported changed-file page, applies versioned deterministic rules, optionally runs a bounded structured LLM review for opted-in repositories, persists findings, and publishes one GitHub Check Run plus at most three idempotent inline comments. The frontend is an operations dashboard for authorized repositories, review runs, settings, metrics, retention, and curated PR evidence export.
+DiffGuard is a focused GitHub pull-request security and governance assistant. GitHub sends a signed `pull_request` webhook, the backend verifies and durably queues it, then a database-backed worker fetches every supported changed-file page, applies versioned deterministic rules and opt-in repository governance, optionally runs a bounded structured LLM review, persists findings, and publishes one GitHub Check Run plus at most three idempotent security comments. The frontend is an operations dashboard for authorized repositories, review runs, settings, metrics, retention, governance, and curated PR evidence export.
 
 ## Stack
 
@@ -33,7 +33,7 @@ diffguard/
 ```text
 React browser -> /api/auth or /api/users -> Express routes -> controllers -> Prisma / Redis
 GitHub -> ngrok -> webhook -> raw-body HMAC -> durable review run -> 202
-Review worker -> installation token -> Check Run -> paginated patches -> rules -> optional LLM -> findings -> idempotent comments -> Check Run summary
+Review worker -> installation token -> Check Run -> paginated patches + optional PR metadata -> rules -> optional LLM -> findings -> idempotent comments -> Check Run summary
 ```
 
 GitHub signs the **exact request bytes**, not a re-formatted JSON object. That is why the webhook router is mounted before `express.json()`: its `express.raw()` middleware must receive the untouched body before a JSON parser consumes it.
@@ -89,12 +89,14 @@ For a local enforcement demonstration before the advisory evidence target is met
 | Method | Path | Auth | Result |
 | --- | --- | --- | --- |
 | GET | `/api/health` | No | Checks whether Postgres accepts `SELECT 1`. |
-| POST | `/api/auth/register` | No | Creates a user and returns a 15-minute JWT. |
-| POST | `/api/auth/login` | No | Verifies credentials and returns a JWT. |
+| POST | `/api/auth/register` | No | Creates a user and sets a 15-minute HttpOnly browser session cookie. |
+| POST | `/api/auth/login` | No | Verifies credentials and sets a 15-minute HttpOnly browser session cookie. |
+| GET | `/api/auth/session` | Session cookie or Bearer JWT | Checks whether the current backend session is valid. |
+| POST | `/api/auth/logout` | No | Clears the browser session cookie. |
 | GET | `/api/auth/github` | No | Starts GitHub OAuth with HTTP-only state and PKCE-verifier cookies. |
 | POST | `/api/auth/github/link` | JWT | Starts the same protected flow with a signed, short-lived intent to link or reconnect the authenticated DiffGuard user. |
 | GET | `/api/auth/github/callback` | GitHub redirect + state/PKCE cookies | Exchanges the GitHub code, links or creates the user, stores access and optional refresh tokens encrypted with expiry metadata, and redirects the browser with a short-lived one-time exchange code. |
-| POST | `/api/auth/github/exchange` | One-time code | Consumes the one-time OAuth exchange code and returns the backend JWT. |
+| POST | `/api/auth/github/exchange` | One-time code | Consumes the one-time OAuth exchange code and sets the backend session cookie. |
 | GET | `/api/users` | Admin JWT | Returns cached user records. |
 | POST | `/api/users` | Admin JWT | Creates a user from `email`, optional `name`, and a password of at least eight characters. Passwords are hashed and omitted from responses. |
 | POST | `/api/webhook/github` | GitHub HMAC | Atomically queues supported `opened` and `synchronize` deliveries and returns the durable review-run ID. |
@@ -123,6 +125,8 @@ For a local enforcement demonstration before the advisory evidence target is met
 - `services/` performs reusable business work, database access, and caching.
 - `lib/` owns shared infrastructure clients and crypto helpers.
 - `middlewares/` runs before or after handlers for auth and errors.
+- Browser authentication uses a 15-minute HttpOnly, SameSite=Lax cookie with `Secure` enabled in production. Bearer JWTs remain accepted for non-browser API clients. State-changing cookie-authenticated requests must carry the exact configured `FRONTEND_URL` origin.
+- SameSite=Lax assumes the production frontend and API are deployed on the same site. A cross-site deployment needs an explicit SameSite=None and CSRF design rather than a cookie flag change alone.
 - `prisma/schema.prisma` is the source of truth for database models.
 
 ## Durable review behavior
@@ -139,6 +143,7 @@ For a local enforcement demonstration before the advisory evidence target is met
 - Repository-scoped read operations require either an admin role or an explicit `GithubRepositoryAccess` grant. Material settings, rerun, retention, and evidence actions require admin or a `MANAGER`/`OWNER` repository grant and are written to `AuditLog`.
 - GitHub OAuth is used only for user sign-in, repository discovery, and self-service repository connection. The browser never receives a GitHub OAuth token, and the callback does not put the backend JWT in the URL. The authorization-code flow uses state and S256 PKCE. Access and refresh tokens are encrypted separately at rest; expiring user tokens rotate shortly before expiry. A rejected refresh or GitHub API `401` clears only the matching stored grant and returns a typed re-authentication response. Only `admin` or `maintain` GitHub repository permissions can create a DiffGuard manager grant.
 - Curated PR evidence export fetches authoritative PR metadata through the backend GitHub App token and returns/downloads sanitized Markdown. It does not export tokens, webhook payloads, full diffs, complete patches, suspected credential values, or private logs.
+- Generic repository governance is disabled by default. The worker fetches and evaluates the PR title and description in memory only when an enabled metadata requirement needs them; path-only and size-only governance make no metadata request. It persists only bounded advisory policy findings and does not store the raw description in the review workflow.
 - Pilot verification is repository-bound: managers can only verify findings whose review run belongs to the selected repository, and each verification is audited.
 - Pilot enforcement is fail-safe: advisory-to-enforcing transitions require recorded reliability and precision evidence, and only the qualifying deterministic rule versions can fail a security Check Run. LLM findings remain advisory.
 
@@ -157,11 +162,21 @@ Rule configuration is captured on the review run when the webhook is queued, so 
       "path": "examples/**",
       "reason": "Documented non-production example fixture"
     }
-  ]
+  ],
+  "governance": {
+    "enabled": true,
+    "minimumDescriptionLength": 80,
+    "requiredSections": ["Summary", "Testing", "Risk"],
+    "requireIssueReference": true,
+    "maxChangedFiles": 40,
+    "protectedPaths": ["src/core/**", "infrastructure/**"],
+    "requireTestsForProtectedPaths": true,
+    "testPaths": ["**/*.test.*", "tests/**", "**/tests/**"]
+  }
 }
 ```
 
-Unknown fields/rules and suppressions without a reason are rejected. Applied suppressions remain visible on persisted findings with their reason.
+Unknown fields/rules, unsafe path patterns, invalid heading names, and suppressions without a reason are rejected. Applied suppressions remain visible on persisted findings with their reason. Governance is opt-in and remains advisory: its metadata, size, and protected-path test policies cannot fail the security Check Run conclusion. If `enabledRuleIds` is present, it is an explicit allowlist and must include any governance rule IDs the repository intends to run.
 
 ## Migration compatibility
 
@@ -183,6 +198,8 @@ Existing local databases created before Phase 1 with `prisma db push` have no Pr
 | `cd backend && bun test` | Runs Bun unit tests. |
 | `cd backend && bun run typecheck` | Checks backend TypeScript without emitting files. |
 | `cd backend && bun run build` | Produces `backend/dist`. |
+| `cd frontend && bun run lint` | Runs frontend static analysis. |
+| `cd frontend && bun run test` | Runs frontend component and state regression tests in jsdom. |
 | `cd frontend && bun run build` | Type-checks and builds the client. |
 | `cd backend && bun run db:push` | Applies the Prisma schema to the configured development database. |
 | `cd backend && bun run db:migrate` | Applies versioned migrations to a migration-managed database. |

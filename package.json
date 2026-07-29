@@ -10,5 +10,11 @@
     "db:generate": "cd backend && bun run db:generate",
     "db:push": "cd backend && bun run db:push",
     "db:studio": "cd backend && bun run db:studio"
+  },
+  "overrides": {
+    "@hono/node-server": "2.0.10",
+    "fast-uri": "3.1.4",
+    "postcss": "8.5.18",
+    "valibot": "1.4.2"
   }
 }
