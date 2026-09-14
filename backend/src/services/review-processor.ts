@@ -106,6 +106,8 @@ export function analyzeGithubFiles(params: {
       analyzedFileCount += 1;
       skippedFileCount += 1;
       changedLines.push(...parsedLines);
+    } else if (coverage.reason === "deleted" || coverage.reason === "ignored") {
+      // Intentionally not analyzed; does not count as a skipped file for coverage penalties.
     } else {
       skippedFileCount += 1;
     }

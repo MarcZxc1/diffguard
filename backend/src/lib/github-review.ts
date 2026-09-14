@@ -120,10 +120,23 @@ export function assessGithubFileCoverage(params: {
   file: GithubPullRequestFile;
   parsedAdditionCount: number;
   parsedDeletionCount: number;
-}): { analyzable: boolean; reason?: "deleted" | "missing_patch" | "truncated_patch" } {
+}): { analyzable: boolean; reason?: "deleted" | "missing_patch" | "truncated_patch" | "ignored" } {
   if (params.file.status === "removed") {
     return { analyzable: false, reason: "deleted" };
   }
+  
+  const ignoredPatterns = [
+    /(^|\/)bun\.lockb?$/,
+    /(^|\/)package-lock\.json$/,
+    /(^|\/)yarn\.lock$/,
+    /(^|\/)pnpm-lock\.yaml$/,
+    /\.(png|jpe?g|gif|svg|ico|webp)$/i,
+    /\.(pdf|zip|tar|gz)$/i,
+  ];
+  if (ignoredPatterns.some(pattern => pattern.test(params.file.filename))) {
+    return { analyzable: false, reason: "ignored" };
+  }
+
   if (!params.file.patch) {
     return { analyzable: false, reason: "missing_patch" };
   }

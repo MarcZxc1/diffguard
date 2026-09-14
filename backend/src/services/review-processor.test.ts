@@ -98,7 +98,7 @@ describe("review processing", () => {
     const analysis = analyzeGithubFiles({
       files: [
         file({ filename: "src/complete.ts" }),
-        file({ filename: "assets/image.png", patch: null }),
+        file({ filename: "src/missing-patch.ts", patch: null }),
         file({
           filename: "src/truncated.ts",
           additions: 2,

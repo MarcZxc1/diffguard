@@ -83,6 +83,11 @@ describe("github review client", () => {
       file: { ...file("binary.png"), patch: null },
       parsedAdditionCount: 0,
       parsedDeletionCount: 0,
+    }).reason).toBe("ignored");
+    expect(assessGithubFileCoverage({
+      file: { ...file("large_data.txt"), patch: null },
+      parsedAdditionCount: 0,
+      parsedDeletionCount: 0,
     }).reason).toBe("missing_patch");
     expect(assessGithubFileCoverage({
       file: file("large.ts"),
