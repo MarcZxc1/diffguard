@@ -14,8 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: postgresql://diffguard:diffguard@localhost:5432/diffguard
-      JWT_SECRET: ci-only-jwt-secret-at-least-32-characters
       GITHUB_WEBHOOK_SECRET: ci-only-webhook-secret
+      NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-anon-key
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -28,30 +29,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Test backend
-        run: bun test
-        working-directory: backend
+      - name: Generate Prisma Client
+        run: bun run db:generate
 
-      - name: Validate database schema
-        run: bun run db:validate
-        working-directory: backend
-
-      - name: Typecheck backend
+      - name: Typecheck
         run: bun run typecheck
-        working-directory: backend
 
-      - name: Build backend
+      - name: Build Next.js
         run: bun run build
-        working-directory: backend
-
-      - name: Lint frontend
-        run: bun run lint
-        working-directory: frontend
-
-      - name: Test frontend
-        run: bun run test
-        working-directory: frontend
-
-      - name: Build frontend
-        run: bun run build
-        working-directory: frontend

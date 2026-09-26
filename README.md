@@ -1,42 +1,72 @@
-# DiffGuard
+# DiffGuard (Unified Next.js Deployment)
 
-DiffGuard is a GitHub pull-request review and SAST bot. It verifies signed pull-request webhooks, detects security risks with deterministic rules and an optional LLM, evaluates opt-in repository governance policies, and posts focused review results.
+DiffGuard is a GitHub PR review and SAST bot with deterministic rule verification and optional LLM review.
 
-## The problem I am solving
+This directory contains the unified Next.js application that combines both the frontend dashboard and backend review operations into a single deployment on **Vercel** with **Supabase** for database and authentication.
 
-Security review often arrives too late or produces so much noise that developers stop trusting it. Traditional scanners can report issues far away from the code a pull request actually changed, while AI-only reviewers may sound confident without being consistent enough to block a merge. Teams are then left with two poor choices: ignore the warnings or enforce them before anyone knows how reliable they are.
+---
 
-I want security feedback to feel like a useful teammate in the pull-request conversation—not another dashboard full of unexplained alerts.
+## Architecture Overview
 
-## My solution
+- **Framework**: Next.js 16 (App Router) + React 19 + Tailwind CSS v4
+- **Runtime**: Bun 1.3+ / Node.js 20+
+- **Database**: PostgreSQL (via Supabase) with Prisma 7 ORM (`@prisma/adapter-pg`)
+- **Authentication**: Supabase Auth (Email + GitHub OAuth) with SSR middleware
+- **Background Worker**: Vercel Cron Jobs (`/api/cron/review-worker` executing every minute)
+- **Deployment Target**: Vercel
 
-DiffGuard reviews the code that changed and puts focused findings directly on the relevant pull-request lines. Deterministic rules handle security checks that need predictable, repeatable behavior. Optional AI review adds context and suggestions, but stays advisory so an uncertain response cannot block someone’s work.
+---
 
-Most importantly, DiffGuard earns the right to enforce. A repository begins in advisory mode while the team collects real evidence: review coverage, successful runs, and human decisions about whether findings were correct or false positives. Only rule versions with enough verified evidence can fail a Check Run. This makes enforcement a decision backed by the team’s own results instead of a switch they are asked to trust blindly.
+## Getting Started
 
-For demonstrations and local testing, a development-only bypass lets contributors exercise the enforcing workflow before the pilot is complete. It is clearly labeled, audited, does not alter the real pilot numbers, and is rejected in production.
+### 1. Environment Variables
 
-## Project status
-
-The current MVP includes durable webhook processing, versioned deterministic review rules, optional structured AI review, GitHub Check Runs, precision-gated enforcement, repository-scoped operations, and generic opt-in pull-request governance. Governance configuration is stored per repository, while pull-request descriptions are evaluated transiently and are not persisted by the review workflow.
-
-DiffGuard remains advisory until repository-specific evidence demonstrates sufficient reliability and precision. See [`docs/CONTEXT.md`](docs/CONTEXT.md) for the architecture, setup, API surface, and boundaries.
-
-## Development
-
-The backend uses Bun, Express, Prisma, PostgreSQL, and Redis. The frontend uses React, Vite, and Tailwind CSS.
-
-To run it locally:
+Copy `.env.example` to `.env.local`:
 
 ```bash
-bun install
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-cd backend && docker compose up -d && bun run db:push
-cd ..
-bun dev
+cp .env.example .env.local
 ```
 
-Then open `http://localhost:5173`. The example environment files contain placeholders; replace the local secrets before starting and never commit the resulting `.env` files.
+Fill in your configuration:
+- `NEXT_PUBLIC_SUPABASE_URL` & `NEXT_PUBLIC_SUPABASE_ANON_KEY`: From your Supabase project settings.
+- `DATABASE_URL`: Your Supabase transaction pooler connection string (Port 6543).
+- `DIRECT_URL`: Your Supabase direct connection string (Port 5432, used for migrations).
+- `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`: From your GitHub App configuration.
+- `OPENAI_API_KEY`: Optional, for AI reviews.
+- `CRON_SECRET`: Random string protecting the Vercel cron endpoint.
 
-The friendly step-by-step version—including GitHub App setup, validation commands, and common fixes—is in [`docs/INSTALLATION.md`](docs/INSTALLATION.md). The rest of the project guides are indexed in [`docs/README.md`](docs/README.md).
+### 2. Database Migrations
+
+Generate Prisma Client:
+
+```bash
+bun run db:generate
+```
+
+Apply migrations to your Supabase Postgres database:
+
+```bash
+bun run db:migrate
+```
+
+### 3. Development Server
+
+Start the Next.js local server:
+
+```bash
+bun run dev
+```
+
+Visit [http://localhost:3000](http://localhost:3000).
+
+---
+
+## Deploying to Vercel
+
+1. Link your GitHub repository to a new project in [Vercel](https://vercel.com).
+2. Set the **Root Directory** to `diffguard`.
+3. Set the **Framework Preset** to Next.js.
+4. Add all environment variables from `.env.example` in the Vercel project dashboard.
+5. In your GitHub App configuration:
+   - Update **Webhook URL** to: `https://<your-vercel-domain>.vercel.app/api/webhook/github`
+   - Update **OAuth Callback URL** in Supabase to: `https://<your-supabase-id>.supabase.co/auth/v1/callback`
