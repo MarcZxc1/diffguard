@@ -681,7 +681,17 @@ export default function Dashboard() {
           {discoveredRepos ? (
             <section className="rounded-lg border border-zinc-200 bg-white p-5">
               <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
-                <h2 className="text-sm font-semibold text-zinc-900">Connect Repositories</h2>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-sm font-semibold text-zinc-900">Connect Repositories</h2>
+                  <a
+                    className="text-xs text-zinc-500 hover:text-zinc-900 underline underline-offset-2"
+                    href="https://github.com/apps/d1ffguard/installations/new"
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    Install on Org ↗
+                  </a>
+                </div>
                 <button
                   className="text-xs text-zinc-500 hover:text-zinc-900"
                   onClick={() => setDiscoveredRepos(null)}
@@ -703,9 +713,22 @@ export default function Dashboard() {
               )}
 
               {filteredDiscovered.length === 0 ? (
-                <p className="py-8 text-center text-xs text-zinc-500">
-                  No repositories found. Ensure the DiffGuard GitHub App is installed.
-                </p>
+                <div className="py-8 text-center text-xs text-zinc-500 space-y-2">
+                  <p>Can&apos;t find your organization repository?</p>
+                  <p className="text-[11px] text-zinc-400 max-w-sm mx-auto">
+                    Ensure the DiffGuard GitHub App is installed on your organization and organization access is granted in GitHub OAuth settings.
+                  </p>
+                  <div className="pt-2">
+                    <a
+                      className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-50 shadow-2xs"
+                      href="https://github.com/apps/d1ffguard/installations/new"
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      Install DiffGuard on Organization ↗
+                    </a>
+                  </div>
+                </div>
               ) : (
                 <div className="mt-3 divide-y divide-zinc-100">
                   {filteredDiscovered.map((repo) => (
@@ -720,28 +743,32 @@ export default function Dashboard() {
                         </p>
                       </div>
 
-                      <button
-                        className={`rounded px-3 py-1 text-xs font-medium transition ${
-                          repo.isConnected
-                            ? "bg-zinc-100 text-zinc-400 cursor-default"
-                            : !repo.isInstalledInDiffguard
-                            ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
-                            : repo.canConnect
-                            ? "bg-zinc-900 text-white hover:bg-zinc-800"
-                            : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
-                        }`}
-                        disabled={repo.isConnected || !repo.isInstalledInDiffguard || !repo.canConnect}
-                        onClick={() => void connectGithubRepository(repo.githubRepositoryId)}
-                        type="button"
-                      >
-                        {repo.isConnected
-                          ? "Connected"
-                          : !repo.isInstalledInDiffguard
-                          ? "Install App"
-                          : repo.canConnect
-                          ? "Connect"
-                          : "Admin required"}
-                      </button>
+                      {repo.isConnected ? (
+                        <span className="rounded bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-400">
+                          Connected
+                        </span>
+                      ) : !repo.isInstalledInDiffguard ? (
+                        <a
+                          className="rounded border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition"
+                          href="https://github.com/apps/d1ffguard/installations/new"
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          Install App ↗
+                        </a>
+                      ) : repo.canConnect ? (
+                        <button
+                          className="rounded bg-zinc-900 px-3 py-1 text-xs font-medium text-white hover:bg-zinc-800 transition"
+                          onClick={() => void connectGithubRepository(repo.githubRepositoryId)}
+                          type="button"
+                        >
+                          Connect
+                        </button>
+                      ) : (
+                        <span className="rounded bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-400 cursor-not-allowed">
+                          Admin required
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
