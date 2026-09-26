@@ -484,10 +484,11 @@ export default function Dashboard() {
       const result = await api<AiReviewTestResult>(`api/repositories/${repository.id}/ai/test`, {
         method: "POST",
       });
+      const isSuccess = Boolean(result.ok || result.status === "OK" || result.status === "SUCCESS");
       showToast(
-        result.status === "SUCCESS" ? "success" : "error",
-        result.status === "SUCCESS"
-          ? "AI review connection OK"
+        isSuccess ? "success" : "error",
+        isSuccess
+          ? (result.message || "AI review connection OK")
           : `AI review check failed: ${result.message}`
       );
     } catch (err) {
