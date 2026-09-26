@@ -33,12 +33,14 @@ The current implementation:
 - Supports optional opt-in structured LLM review with fail-open behavior.
 - Exposes repository-scoped dashboard APIs, settings, metrics, reruns, retention pruning, audit logs, and sanitized PR evidence export.
 - Exposes an advisory-pilot dashboard for audited finding verification, rule-version precision, reliability tracking, and precision-gated enforcement.
-- Has 114 passing backend tests covering the implemented contracts.
+- Has 138 passing backend tests and 8 frontend regression tests covering the implemented contracts.
+- Has reusable authenticated browser accessibility validation for desktop, 320px reflow, keyboard focus, semantic structure, text resizing, and delayed loading states.
 
 Known remaining debt:
 
 - Rule precision must still be measured in an advisory pilot before any finding can block merges.
 - The durable worker currently shares the API process; separate deployment is operational hardening.
+- Production deployment, recovery, observability, and real-integration release gates remain Phase 10 work.
 
 ## Phase 0 — Stabilize the Foundation
 
@@ -154,17 +156,21 @@ Status: implementation and local verification completed on 2026-07-12; pilot pre
 - [x] Add metrics for processing time, retry rate, GitHub API failures, suppression rate, and skipped coverage.
 - [x] Add retention and deletion controls for review data.
 - [x] Add operational runbooks, backups, migrations, and deployment health checks.
+- [x] Move browser authentication from `localStorage` to a short-lived HttpOnly cookie with centralized expiry handling.
+- [x] Make repository loading latest-request-wins and serialize settings mutations.
+- [x] Add accessible dynamic status, form labels, table captions, and review-detail focus management.
+- [x] Add frontend regression tests and enforce frontend lint/tests in CI.
 
 ### Curated PR Evidence Export
 
-Add an explicit **Save PR Evidence** action for users who want to preserve an important pull request as thesis or project evidence.
+Add an explicit **Save PR Evidence** action for users who want to preserve an important pull request as project evidence.
 
 - [x] Let an authorized user select a pull request, preview the content to be exported, and confirm the save intentionally. Do not export every pull request automatically.
 - [x] Fetch authoritative PR metadata through the DiffGuard backend using the GitHub App installation token. The Vercel-hosted frontend must never receive GitHub App private keys or installation tokens.
-- [x] Export the PR title, description snapshot, repository, PR number, author, status, relevant dates, source URL, head/merge commit, review/check summary, and user-written thesis relevance.
+- [x] Export the PR title, description snapshot, repository, PR number, author, status, relevant dates, source URL, head/merge commit, review/check summary, and user-written evidence context.
 - [x] Treat GitHub as the source of truth. Include the source URL and export timestamp so the Markdown record is clearly a snapshot rather than an independent canonical copy.
-- [x] Use a versioned Markdown schema with a filename such as `PR-0042 Add measurement validation.md` and a recommended destination of `11 Testing and QA/PR Reviews/` in the target vault.
-- [x] Link milestone-level PR records from `Phase 1 Implementation Memory.md` instead of copying every commit or review comment into the vault.
+- [x] Use a versioned Markdown schema with a filename such as `PR-0042 Add measurement validation.md` and let users choose their own documentation destination.
+- [x] Link milestone-level PR records from existing project documentation instead of copying every commit or review comment.
 - [x] Keep the initial Vercel flow filesystem-independent: return a sanitized `.md` download that the user places in the vault. Consider an authenticated local Obsidian plugin or companion service only after the download workflow is safe and useful.
 - [x] Authorize every export against the selected installation and repository, record who requested it, and rate-limit the endpoint.
 - [x] Sanitize filenames, YAML values, Markdown, HTML, links, and Obsidian embed syntax. Apply size limits and prevent path traversal, frontmatter injection, template execution, or arbitrary destination paths.
@@ -200,11 +206,11 @@ Implementation support:
 3. Record review-run links, confirmed findings, false positives, skipped files, and processing failures.
 4. Tune rule thresholds and repository configuration without hiding real defects.
 5. Review privacy implications for any source fixtures or generated data.
-6. Export selected merged PRs into `11 Testing and QA/PR Reviews/`, then link milestone evidence from the implementation memory.
+6. Export selected merged PRs into the team’s chosen documentation system, then link milestone evidence from the relevant project record.
 7. Verify exported notes contain no secrets, full patches, unnecessary personal data, or broken source links.
 8. Enable a required check only for rules that meet agreed precision and reliability targets.
 
-Pilot evidence belongs primarily in GitHub. Thesis documentation should link important PRs and summarize outcomes rather than duplicate every commit or comment.
+Pilot evidence belongs primarily in GitHub. Supporting documentation should link important PRs and summarize outcomes rather than duplicate every commit or comment.
 
 ## Phase 7 — User Authentication & Direct Repository Connection
 
@@ -301,6 +307,152 @@ Exit criteria:
 - [x] Naming findings cannot fail a Check Run, even in enforcing mode.
 
 Future Phase 8 extensions may add language-aware adapters or other maintainability policies after real-repository signal quality is evaluated.
+
+## Phase 9 — Generic Repository Governance
+
+Goal: let repositories express their own pull-request review expectations without hard-coded customer names, paths, fixtures, or data in DiffGuard.
+
+Status: generic governance implementation and local verification completed on 2026-07-30. Real repositories must still tune the opt-in policy in advisory mode.
+
+- [x] Add strict opt-in configuration for PR description length, required Markdown sections, issue references, and advisory changed-file limits.
+- [x] Add generic protected-path and test-path globs without embedding any target repository structure.
+- [x] Fetch PR metadata only when governance is enabled and keep title/body transient during review processing.
+- [x] Persist only bounded advisory findings, never the raw PR description.
+- [x] Add manager dashboard controls with a deliberate Save action and neutral examples.
+- [x] Keep all governance findings categorized as `POLICY`, excluded from inline security comments, pilot precision, and blocking conclusions.
+- [x] Add positive, negative, boundary, strict-validation, opt-in, and description-non-persistence tests.
+- [x] Document the privacy boundary and add a private-identifier audit to final verification.
+
+Exit criteria:
+
+- [x] Existing repositories receive no governance findings until a manager opts in.
+- [x] No database migration or additional GitHub App permission is required.
+- [x] Repository-specific headings and paths exist only in runtime repository configuration.
+- [x] Pull-request descriptions are not copied into persisted findings.
+- [x] GitHub-native CODEOWNERS, required reviews, and branch protection remain separate deliberate controls.
+
+## Phase 10 — Production Readiness and Controlled Release
+
+Goal: turn the verified application into a repeatable, observable, recoverable private service without weakening the advisory-first safety model.
+
+Status: planned on 2026-07-30. Local implementation verification is strong, but production infrastructure, real-integration staging evidence, recovery rehearsal, and advisory-pilot evidence remain pending.
+
+Production readiness has two separate release gates:
+
+1. **Advisory production** may begin after the source, infrastructure, data-safety, security, observability, and staging gates below pass.
+2. **Enforced production** may begin only after the advisory pilot also meets its reliability and per-rule precision thresholds and an operator deliberately enables the GitHub required check.
+
+### 10.1 Release Source and Supply Chain
+
+- [ ] Land the current work through a reviewed pull request from a dedicated release-preparation branch.
+- [ ] Require backend tests, frontend tests, lint, typecheck, builds, Prisma validation, dependency audit, and private-identifier scanning from a clean checkout.
+- [ ] Add dependency-update automation, lockfile review, and a documented policy for urgent security updates.
+- [ ] Produce a versioned release artifact tied to an immutable commit and record its build/runtime versions.
+- [ ] Generate an SBOM or equivalent dependency inventory for each release artifact.
+
+Exit evidence:
+
+- [ ] The release commit passes every required CI check without local-only state.
+- [ ] The deployed artifact can be traced back to an immutable reviewed commit.
+- [ ] Dependency and container scans contain no unresolved critical or high-severity production findings.
+
+### 10.2 Production Deployment Architecture
+
+- [ ] Choose and document the private hosting topology for frontend, API, worker, PostgreSQL, and Redis.
+- [ ] Package the API and worker as reproducible production artifacts; run the durable worker separately from the request-serving API.
+- [ ] Serve the frontend and API over HTTPS on the same site so the current HttpOnly SameSite=Lax session design remains valid.
+- [ ] Add liveness and readiness checks that cover process health, PostgreSQL, Redis, migration compatibility, and worker queue progress.
+- [ ] Configure bounded CPU, memory, worker concurrency, request body size, connection pools, timeouts, and graceful shutdown behavior.
+- [ ] Document DNS, TLS renewal, proxy trust, CORS origin, webhook URL, OAuth callback URL, and rollback routing.
+
+Exit evidence:
+
+- [ ] A fresh private staging environment can be provisioned from documentation without manual database edits.
+- [ ] API and worker processes can restart independently without losing or duplicating accepted work.
+- [ ] Failed readiness checks remove unhealthy instances from traffic.
+
+### 10.3 Secrets, Identity, and Security Controls
+
+- [ ] Store JWT, webhook, OAuth, token-encryption, GitHub App, database, Redis, and optional AI credentials only in a production secret manager.
+- [ ] Validate production secret strength and reject placeholder, development, or missing values at startup.
+- [ ] Confirm the development enforcement bypass is disabled and rejected in the production environment.
+- [ ] Re-verify least-privilege GitHub App permissions and repository installation scope.
+- [ ] Add an explicit Content Security Policy and review the existing Helmet, CORS, cookie, rate-limit, and proxy settings under the deployed origins.
+- [ ] Document secret rotation, credential revocation, incident containment, and access-review procedures.
+- [ ] Run static security, dependency, container, and secret scans against the release candidate.
+
+Exit evidence:
+
+- [ ] No production secret exists in source, build output, logs, browser storage, URLs, or CI artifacts.
+- [ ] Session, OAuth, webhook, authorization, and repository-isolation smoke tests pass against staging.
+- [ ] Rotation of each long-lived credential is rehearsed without losing persisted review state.
+
+### 10.4 Database, Backup, and Recovery
+
+- [ ] Provision managed PostgreSQL and Redis with private networking, encryption, authenticated access, and supported versions.
+- [ ] Dry-run `prisma migrate deploy` against a restored production-like snapshot before the first production migration.
+- [ ] Define recovery point and recovery time objectives, backup frequency, retention, encryption, and ownership.
+- [ ] Perform and time a full backup restore into an isolated environment; verify schema, users, repositories, audit logs, review runs, and findings.
+- [ ] Document forward migration, rollback/roll-forward, failed migration recovery, and retention-pruning safeguards.
+- [ ] Verify Redis loss or restart does not corrupt durable database review state.
+
+Exit evidence:
+
+- [ ] Migration and restore rehearsals complete without manual data repair.
+- [ ] A tested backup exists outside the primary database failure domain.
+- [ ] Operators can recover service within the agreed recovery objectives.
+
+### 10.5 Observability and Reliability
+
+- [ ] Emit structured, redacted logs with request, webhook delivery, repository, and review-run correlation identifiers.
+- [ ] Monitor API latency/error rate, webhook acceptance, queue depth/age, worker throughput, retry exhaustion, stale runs, GitHub failures, database health, Redis health, and resource saturation.
+- [ ] Define service-level objectives and alert thresholds with named owners and escalation paths.
+- [ ] Add staging load and soak tests for webhook bursts, large pull requests, concurrent repository reads, settings writes, and worker restarts.
+- [ ] Exercise rate limits, GitHub failures, expired OAuth grants, partial patches, database interruptions, Redis interruptions, and graceful deployment shutdowns.
+- [ ] Keep raw tokens, webhook bodies, complete patches, suspected secrets, and unnecessary personal data out of telemetry.
+
+Exit evidence:
+
+- [ ] Every critical failure mode produces an actionable, sanitized signal.
+- [ ] Alerts are test-fired and reach the responsible operator.
+- [ ] Load and failure-injection results stay within the documented limits or produce a recorded capacity plan.
+
+### 10.6 Private Staging and Advisory Rollout
+
+- [ ] Deploy a private production-like staging environment using separate credentials, databases, GitHub App configuration, and OAuth callback URLs.
+- [ ] Run real end-to-end GitHub OAuth, repository discovery/connection, webhook, retry, Check Run, comment, rerun, retention, and evidence-export journeys.
+- [ ] Repeat desktop/mobile accessibility scans and complete a human keyboard and screen-reader usability pass.
+- [ ] Verify the staging privacy boundary: no private identifiers or repository content enter generic source, fixtures, logs, screenshots, or documentation.
+- [ ] Rehearse deployment rollback, database recovery, credential rotation, and GitHub App disablement.
+- [ ] Launch production in advisory mode to a deliberately small allowlisted repository set with a documented stop condition.
+
+Exit evidence:
+
+- [ ] The release checklist is signed off with links to CI, staging smoke tests, migration/restore evidence, security scans, and rollback rehearsal.
+- [ ] Production starts in advisory mode with enforcement bypass disabled and branch protection unchanged.
+- [ ] Operators can disable webhook processing and GitHub publication quickly without deleting evidence.
+
+### 10.7 Pilot Evidence and Enforcement Decision
+
+- [ ] Collect at least five distinct representative reviewed pull requests with at least 95% successful full-coverage reliability.
+- [ ] Record at least ten human-verified findings for any rule version proposed for enforcement and achieve at least 90% precision for that version.
+- [ ] Resolve partial coverage and recurring operational failures before proposing a required check.
+- [ ] Review false positives, suppressions, privacy impact, developer experience, incident readiness, and rollback ownership with stakeholders.
+- [ ] Enable only proven deterministic rule versions; keep AI, policy, suppressed, and unproven findings advisory.
+- [ ] Make the DiffGuard Check Run required only through a separate, deliberate GitHub branch-protection or ruleset change.
+
+Exit evidence:
+
+- [ ] The dashboard reports the pilot ready with no unresolved reliability or rule-evidence blocker.
+- [ ] The enforcement decision and eligible rule versions are recorded and approved.
+- [ ] A non-critical pull request proves both blocking and recovery behavior before broader rollout.
+
+### Phase 10 Completion Criteria
+
+- [ ] A clean release can be reproduced, deployed, observed, backed up, restored, rolled back, and disabled using documented procedures.
+- [ ] Production secrets and repository data remain outside the generic repository and client-visible surfaces.
+- [ ] Advisory production meets its operational and security gates.
+- [ ] Enforced production remains impossible until the independent pilot and branch-protection gates are deliberately completed.
 
 ## Cross-Cutting Definition of Done
 

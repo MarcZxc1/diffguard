@@ -1,0 +1,14 @@
+{
+  "action": "opened",
+  "installation": {
+    "id": 123456
+  },
+  "repository": {
+    "full_name": "example-owner/diffguard-demo"
+  },
+  "pull_request": {
+    "number": 1,
+    "title": "Test vulnerable PR",
+    "html_url": "https://github.com/example-owner/diffguard-demo/pull/1"
+  }
+}
