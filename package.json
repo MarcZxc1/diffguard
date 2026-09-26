@@ -3,10 +3,13 @@
   "private": true,
   "workspaces": [
     "backend",
-    "frontend"
+    "frontend",
+    "diffguard"
   ],
   "scripts": {
-    "dev": "bunx concurrently \"cd backend && bun dev\" \"cd frontend && bun dev\"",
+    "dev": "bunx concurrently \"cd backend && bun dev\" \"cd frontend && bun dev\" \"cd diffguard && bun dev\"",
+    "dev:next": "cd diffguard && bun dev",
+    "build:next": "cd diffguard && bun run build",
     "db:generate": "cd backend && bun run db:generate",
     "db:push": "cd backend && bun run db:push",
     "db:studio": "cd backend && bun run db:studio"
