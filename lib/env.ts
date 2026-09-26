@@ -16,22 +16,40 @@ const envSchema = z.object({
   GITHUB_WEBHOOK_SECRET: z.string().default("development-webhook-secret"),
 
   // App credentials are optional until a workflow needs to call GitHub's API.
-  GITHUB_APP_ID: z.string().regex(/^\d+$/).optional(),
-  GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
-  GITHUB_APP_PRIVATE_KEY_PATH: z.string().min(1).optional(),
+  GITHUB_APP_ID: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().optional()
+  ),
+  GITHUB_APP_PRIVATE_KEY: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().optional()
+  ),
+  GITHUB_APP_PRIVATE_KEY_PATH: z.string().optional(),
 
   // OAuth for Phase 7
-  GITHUB_CLIENT_ID: z.string().min(1).optional(),
-  GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
-  GITHUB_OAUTH_REDIRECT_URI: z.string().url().optional(),
-  GITHUB_OAUTH_TOKEN_ENCRYPTION_KEY: z.preprocess(
-    (value) => (typeof value === "string" && value.length === 0 ? undefined : value),
-    z.string().min(32).optional()
+  GITHUB_CLIENT_ID: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().optional()
   ),
-  FRONTEND_URL: z.string().url().default("http://localhost:5173"),
+  GITHUB_CLIENT_SECRET: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().optional()
+  ),
+  GITHUB_OAUTH_REDIRECT_URI: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().optional()
+  ),
+  GITHUB_OAUTH_TOKEN_ENCRYPTION_KEY: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().optional()
+  ),
+  FRONTEND_URL: z.string().default("http://localhost:3000"),
 
-  OPENAI_API_KEY: z.string().min(1).optional(),
-  OPENAI_MODEL: z.string().min(1).default("gpt-5.6-sol"),
+  OPENAI_API_KEY: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+    z.string().optional()
+  ),
+  OPENAI_MODEL: z.string().default("gpt-5.6-sol"),
   DIFFGUARD_DEV_ENFORCEMENT_BYPASS: strictBoolean.default(false),
 }).superRefine((environment, context) => {
   if (
