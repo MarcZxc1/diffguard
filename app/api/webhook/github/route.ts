@@ -87,7 +87,10 @@ export async function POST(request: Request) {
     if (acceptance.kind === "queued" || acceptance.kind === "requeued") {
       after(async () => {
         try {
-          await processNextReviewRun();
+          let processed = 0;
+          while (processed < 5 && await processNextReviewRun()) {
+            processed++;
+          }
         } catch (error) {
           console.error("Async review execution failed:", error);
         }

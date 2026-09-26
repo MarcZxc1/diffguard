@@ -352,9 +352,13 @@ export async function processReviewRun(run: ReviewRunJob) {
     },
     configuration: run.ruleConfiguration,
   });
+  const effectiveModel =
+    run.repository.llmModel && run.repository.llmModel !== "gpt-5.6-sol"
+      ? run.repository.llmModel
+      : env.OPENAI_MODEL;
   const llmReview = await runStructuredLlmReview({
     enabled: run.repository.llmReviewEnabled,
-    model: run.repository.llmModel,
+    model: effectiveModel,
     headSha: run.headSha,
     changedLines: analysis.changedLines,
     deterministicFindings,

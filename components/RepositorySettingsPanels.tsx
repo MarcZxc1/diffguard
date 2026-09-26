@@ -66,7 +66,7 @@ export function RepositorySettingsPanels({
               onChange={(e) => onRepositoryChange({ llmReviewEnabled: e.target.checked })}
               type="checkbox"
             />
-            LLM Review (gpt-5.6-sol)
+            LLM Review ({repository.llmModel || "auto:free"})
           </label>
         </div>
 

@@ -24,7 +24,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     );
   }
 
-  const result = await testOpenAiReviewConfiguration({ model: repository.llmModel });
+  const effectiveModel =
+    repository.llmModel && repository.llmModel !== "gpt-5.6-sol"
+      ? repository.llmModel
+      : process.env.OPENAI_MODEL || "auto:free";
+  const result = await testOpenAiReviewConfiguration({ model: effectiveModel });
   await recordAuditLog({
     user,
     repositoryId: id,
