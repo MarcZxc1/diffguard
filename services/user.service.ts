@@ -15,6 +15,27 @@ type CreateUserInput = {
   password?: string;
 };
 
+type CreateUserWithPasswordInput = {
+  email: string;
+  name?: string;
+  password: string;
+};
+
+type CreateUserDependencies = {
+  hashPassword(password: string): Promise<string>;
+  invalidateCache(): Promise<unknown>;
+  persist(data: CreateUserWithPasswordInput): Promise<unknown>;
+};
+
+export async function createUserSafely(
+  data: CreateUserWithPasswordInput,
+  dependencies: CreateUserDependencies,
+) {
+  const password = await dependencies.hashPassword(data.password);
+  await dependencies.invalidateCache();
+  return await dependencies.persist({ ...data, password });
+}
+
 export const userService = {
   async list() {
     return await prisma.user.findMany({

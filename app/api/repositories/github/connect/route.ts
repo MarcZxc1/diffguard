@@ -58,7 +58,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, repositoryId: repo.id });
   } catch (error: any) {
     if (error.message === "GITHUB_REAUTH_REQUIRED") {
-      return NextResponse.json({ error: "GitHub authorization expired or was revoked. Sign in with GitHub again." }, { status: 401 });
+      return NextResponse.json(
+        {
+          error: {
+            message: "GitHub authorization expired or was revoked. Sign in with GitHub again.",
+            details: { code: "GITHUB_REAUTH_REQUIRED" },
+          },
+        },
+        { status: 401 }
+      );
     }
     return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
   }

@@ -185,9 +185,25 @@ export default function App() {
   }, [clearRepositoryState]);
 
   useEffect(() => {
-    
     void loadRepositories();
   }, [loadRepositories]);
+
+  useEffect(() => {
+    async function checkUser() {
+      try {
+        const data = await api<{ user: { id: string; role: string; githubConnected?: boolean } }>(
+          "api/users/me",
+          { handleUnauthorized: false }
+        );
+        if (data?.user && data.user.githubConnected === false) {
+          setGithubReauthRequired(true);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    void checkUser();
+  }, []);
 
   useEffect(() => {
     clearRepositoryState();
@@ -238,13 +254,16 @@ export default function App() {
     setStatus("loading");
     setError("");
     try {
-      const data = await api<DiscoveredRepository[]>("api/repositories/github/discover");
+      const data = await api<DiscoveredRepository[]>("api/repositories/github/discover", {
+        handleUnauthorized: false,
+      });
       setDiscoveredRepos(data);
       setStatus("idle");
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) return;
-      if (err instanceof ApiError && err.code === "GITHUB_REAUTH_REQUIRED") {
+      if (err instanceof ApiError && (err.code === "GITHUB_REAUTH_REQUIRED" || err.status === 401)) {
         setGithubReauthRequired(true);
+        setStatus("idle");
+        return;
       }
       setStatus("error");
       setError(err instanceof Error ? err.message : "Unable to discover repositories");
@@ -257,12 +276,14 @@ export default function App() {
       await api<{ success: boolean; repositoryId: string }>("api/repositories/github/connect", {
         method: "POST",
         body: JSON.stringify({ githubRepositoryId }),
+        handleUnauthorized: false,
       });
       await loadRepositories();
       setDiscoveredRepos(null); // close discovery
     } catch (err) {
-      if (err instanceof ApiError && err.code === "GITHUB_REAUTH_REQUIRED") {
+      if (err instanceof ApiError && (err.code === "GITHUB_REAUTH_REQUIRED" || err.status === 401)) {
         setGithubReauthRequired(true);
+        return;
       }
       setError(err instanceof Error ? err.message : "Unable to connect repository");
     }
@@ -272,10 +293,14 @@ export default function App() {
     if (isReconnectingGithub) return;
     setIsReconnectingGithub(true);
     try {
-      const result = await api<{ authorizationUrl: string }>("api/auth/github/link", {
-        method: "POST",
+      const supabase = createClient();
+      await supabase.auth.signInWithOAuth({
+        provider: "github",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          scopes: "read:user user:email repo",
+        },
       });
-      window.location.assign(result.authorizationUrl);
     } catch (err) {
       setIsReconnectingGithub(false);
       setError(err instanceof Error ? err.message : "Unable to reconnect GitHub");
@@ -574,7 +599,16 @@ export default function App() {
 
           {discoveredRepos ? (
             <div className="rounded border border-slate-200 bg-white p-5">
-              <h2 className="text-xl font-black mb-4">Discover Repositories</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-black">Discover Repositories</h2>
+                <button
+                  className="rounded border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  onClick={() => setDiscoveredRepos(null)}
+                  type="button"
+                >
+                  Close
+                </button>
+              </div>
               {discoveredRepos.length === 0 ? (
                 <p className="text-sm text-slate-600">No repositories found. Ensure the DiffGuard GitHub App is installed on your repositories.</p>
               ) : (

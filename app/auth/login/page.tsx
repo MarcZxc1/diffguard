@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -12,6 +12,18 @@ export default function LoginPage() {
   const [authError, setAuthError] = useState("");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const supabase = createClient();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const err = params.get("error");
+      if (err === "auth_failed") {
+        setAuthError("GitHub authentication failed. Please try signing in again.");
+      } else if (err) {
+        setAuthError(err);
+      }
+    }
+  }, []);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -37,6 +49,7 @@ export default function LoginPage() {
       provider: "github",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
+        scopes: "read:user user:email repo",
       },
     });
   };

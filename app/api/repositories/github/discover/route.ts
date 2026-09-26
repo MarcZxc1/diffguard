@@ -51,7 +51,15 @@ export async function GET() {
     return NextResponse.json(result);
   } catch (error: any) {
     if (error.message === "GITHUB_REAUTH_REQUIRED") {
-      return NextResponse.json({ error: "GitHub authorization expired or was revoked. Sign in with GitHub again." }, { status: 401 });
+      return NextResponse.json(
+        {
+          error: {
+            message: "GitHub authorization expired or was revoked. Reconnect GitHub to discover or connect repositories.",
+            details: { code: "GITHUB_REAUTH_REQUIRED" },
+          },
+        },
+        { status: 401 }
+      );
     }
     return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
   }

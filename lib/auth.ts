@@ -6,6 +6,7 @@ export type AuthenticatedUser = {
   id: string;
   role: string;
   supabaseId: string;
+  githubConnected?: boolean;
 };
 
 export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> {
@@ -13,27 +14,42 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> 
   const { data: { user: supabaseUser } } = await supabase.auth.getUser();
   if (!supabaseUser) return null;
 
+  const email = supabaseUser.email || (supabaseUser.user_metadata?.email as string | undefined);
+  const rawGithubId = supabaseUser.identities?.find((i) => i.provider === "github")?.id 
+    ?? supabaseUser.user_metadata?.provider_id 
+    ?? supabaseUser.user_metadata?.sub;
+  const githubId = rawGithubId ? String(rawGithubId) : undefined;
+
   let user = await prisma.user.findFirst({
     where: {
       OR: [
-        { email: supabaseUser.email! },
+        ...(email ? [{ email }] : []),
+        ...(githubId ? [{ githubId }] : []),
       ],
     },
-    select: { id: true, role: true },
+    select: { id: true, role: true, githubAccessTokenCiphertext: true },
   });
 
-  if (!user) {
+  if (!user && email) {
     user = await prisma.user.create({
       data: {
-        email: supabaseUser.email!,
+        email,
         name: supabaseUser.user_metadata?.full_name ?? supabaseUser.user_metadata?.name ?? null,
         role: "USER",
+        ...(githubId ? { githubId } : {}),
       },
-      select: { id: true, role: true },
+      select: { id: true, role: true, githubAccessTokenCiphertext: true },
     });
   }
 
-  return { id: user.id, role: user.role, supabaseId: supabaseUser.id };
+  if (!user) return null;
+
+  return {
+    id: user.id,
+    role: user.role,
+    supabaseId: supabaseUser.id,
+    githubConnected: Boolean(user.githubAccessTokenCiphertext),
+  };
 }
 
 export function unauthorizedResponse() {
