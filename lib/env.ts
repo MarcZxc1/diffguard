@@ -24,7 +24,10 @@ const envSchema = z.object({
   GITHUB_CLIENT_ID: z.string().min(1).optional(),
   GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
   GITHUB_OAUTH_REDIRECT_URI: z.string().url().optional(),
-  GITHUB_OAUTH_TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
+  GITHUB_OAUTH_TOKEN_ENCRYPTION_KEY: z.preprocess(
+    (value) => (typeof value === "string" && value.length === 0 ? undefined : value),
+    z.string().min(32).optional()
+  ),
   FRONTEND_URL: z.string().url().default("http://localhost:5173"),
 
   OPENAI_API_KEY: z.string().min(1).optional(),

@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { env } from "@/lib/env";
 import { verifyGithubWebhookSignature } from "@/lib/github-webhook";
 import { githubWebhookDeliveryService } from "@/services/github-webhook-delivery.service";
+import { processNextReviewRun } from "@/services/review-worker";
 import { z } from "zod";
 
 const actionSchema = z.object({ action: z.string().optional() });
@@ -83,7 +84,16 @@ export async function POST(request: Request) {
     if (acceptance.kind === "disabled") return NextResponse.json({ message: "Repository is disabled" }, { status: 202 });
     if (acceptance.kind === "skipped") return NextResponse.json({ message: "Review skipped", reviewRunId: acceptance.reviewRunId, state: acceptance.state, reason: acceptance.reason }, { status: 202 });
     if (acceptance.kind === "duplicate") return NextResponse.json({ message: "Webhook already registered", reviewRunId: acceptance.reviewRunId, state: acceptance.state }, { status: 200 });
-    
+    if (acceptance.kind === "queued" || acceptance.kind === "requeued") {
+      after(async () => {
+        try {
+          await processNextReviewRun();
+        } catch (error) {
+          console.error("Async review execution failed:", error);
+        }
+      });
+    }
+
     return NextResponse.json({
       message: acceptance.kind === "requeued" ? "Webhook requeued" : "Webhook queued",
       reviewRunId: acceptance.reviewRunId,
