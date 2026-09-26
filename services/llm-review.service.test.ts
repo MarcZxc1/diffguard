@@ -62,6 +62,7 @@ describe("runStructuredLlmReview", () => {
     const result = await testOpenAiReviewConfiguration({
       model: "gpt-test",
       apiKey: testOpenAiApiKey,
+      baseUrl: "https://api.openai.com/v1",
       fetchImpl: (async () => new Response(JSON.stringify({
         output: [{
           type: "message",
@@ -147,6 +148,7 @@ describe("runStructuredLlmReview", () => {
       enabled: true,
       headSha: "head123",
       apiKey: testOpenAiApiKey,
+      baseUrl: "https://api.openai.com/v1",
       changedLines: [{
         filePath: "src/api/auth.ts",
         lineNumber: 42,
@@ -182,5 +184,79 @@ describe("runStructuredLlmReview", () => {
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].filePath).toBe("src/api/auth.ts");
     expect(result.findings[0].lineNumber).toBe(42);
+  });
+
+  it("uses chat/completions endpoint and format for OpenRouter baseUrl", async () => {
+    let requestedUrl = "";
+    let requestBody: Record<string, unknown> = {};
+    const result = await testOpenAiReviewConfiguration({
+      model: "openrouter/free",
+      apiKey: testOpenAiApiKey,
+      baseUrl: "https://openrouter.ai/api/v1",
+      fetchImpl: (async (url: string, init: RequestInit) => {
+        requestedUrl = url;
+        requestBody = JSON.parse(init.body as string);
+        return new Response(JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify({ status: "ok", message: "AI review is reachable." }),
+            },
+          }],
+        }));
+      }) as unknown as typeof fetch,
+    });
+    expect(requestedUrl).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(requestBody.messages).toBeDefined();
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("OK");
+  });
+
+  it("runs structured review via chat/completions for OpenRouter baseUrl", async () => {
+    let requestedUrl = "";
+    const result = await runStructuredLlmReview({
+      enabled: true,
+      headSha: "head456",
+      apiKey: testOpenAiApiKey,
+      baseUrl: "https://openrouter.ai/api/v1",
+      changedLines: [{
+        filePath: "src/config.ts",
+        lineNumber: 5,
+        content: "const secret = 'password123';",
+        changeType: "added",
+      }],
+      deterministicFindings: [],
+      fetchImpl: (async (url: string) => {
+        requestedUrl = url;
+        return new Response(JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                findings: [{
+                  filePath: "src/config.ts",
+                  lineNumber: 5,
+                  title: "Hardcoded credential",
+                  evidence: "const secret = 'password123'",
+                  explanation: "Hardcoded password in source code",
+                  remediation: "Use environment variables",
+                  severity: "HIGH",
+                  confidence: 0.92,
+                }],
+              }),
+            },
+          }],
+        }));
+      }) as unknown as typeof fetch,
+    });
+
+    expect(requestedUrl).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(result.state).toBe("SUCCEEDED");
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]).toMatchObject({
+      filePath: "src/config.ts",
+      lineNumber: 5,
+      title: "Hardcoded credential",
+      severity: "HIGH",
+      source: "LLM",
+    });
   });
 });
