@@ -10,18 +10,10 @@ import { ReviewDetailPanel } from "@/components/ReviewDetailPanel";
 import { ReviewRunsTable } from "@/components/ReviewRunsTable";
 import {
   AlertCircleIcon,
-  AlertTriangleIcon,
   CheckCircleIcon,
-  CheckIcon,
-  ExternalLinkIcon,
   GithubIcon,
-  LockIcon,
-  RefreshCwIcon,
-  ShieldCheckIcon,
   ShieldIcon,
-  SparklesIcon,
-  UnlockIcon,
-  XIcon,
+  ShieldCheckIcon,
 } from "@/components/Icons";
 import {
   ApiError,
@@ -106,7 +98,7 @@ export default function Dashboard() {
     setToast({ id, tone, message });
     window.setTimeout(() => {
       setToast((current) => (current?.id === id ? null : current));
-    }, 4000);
+    }, 3500);
   }, []);
 
   const clearRepositoryState = useCallback(() => {
@@ -168,7 +160,6 @@ export default function Dashboard() {
         setRepositorySyncState("idle");
         setLastRepositoryRefreshAt(new Date());
 
-        // Sync retention draft only if not actively dirty
         if (!retentionDraftDirtyRef.current) {
           setRetentionDraft(String(repository.retentionDays));
         }
@@ -234,7 +225,6 @@ export default function Dashboard() {
     };
   }, [clearRepositoryState, loadRepository, selectedId]);
 
-  // Reliable Smart Polling: 3s when runs active, 20s when idle
   useEffect(() => {
     if (!selectedId || discoveredRepos) return;
     let cancelled = false;
@@ -298,7 +288,7 @@ export default function Dashboard() {
       });
       await loadRepositories();
       setDiscoveredRepos(null);
-      showToast("success", "Repository connected successfully!");
+      showToast("success", "Repository connected");
     } catch (err) {
       if (err instanceof ApiError && (err.code === "GITHUB_REAUTH_REQUIRED" || err.status === 401)) {
         setGithubReauthRequired(true);
@@ -356,7 +346,7 @@ export default function Dashboard() {
       setRepositories((items) =>
         items.map((item) => (item.id === updated.id ? { ...item, ...updated } : item))
       );
-      showToast("success", "Settings updated successfully.");
+      showToast("success", "Settings updated");
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update settings");
@@ -375,7 +365,7 @@ export default function Dashboard() {
     if (!Number.isInteger(days) || days < 7 || days > 365) {
       setRetentionDraft(String(repository.retentionDays));
       retentionDraftDirtyRef.current = false;
-      setError("Retention days must be a whole number between 7 and 365.");
+      setError("Retention days must be between 7 and 365.");
       return;
     }
     if (days === repository.retentionDays) {
@@ -423,7 +413,7 @@ export default function Dashboard() {
     try {
       setError("");
       await api(`api/review-runs/${id}/rerun`, { method: "POST" });
-      showToast("success", "Review rerun queued.");
+      showToast("success", "Review rerun queued");
       await loadRepository(repository.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to rerun review");
@@ -475,11 +465,11 @@ export default function Dashboard() {
       showToast(
         "success",
         verification === "CONFIRMED"
-          ? "Finding marked as confirmed."
-          : "Finding marked as false positive."
+          ? "Finding confirmed"
+          : "Finding marked as false positive"
       );
     } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Unable to update finding verification");
+      showToast("error", err instanceof Error ? err.message : "Unable to record verification");
     } finally {
       setVerifyingFindingId(null);
     }
@@ -497,8 +487,8 @@ export default function Dashboard() {
       showToast(
         result.status === "SUCCESS" ? "success" : "error",
         result.status === "SUCCESS"
-          ? "AI Review health check passed!"
-          : `AI Review check failed: ${result.message}`
+          ? "AI review connection OK"
+          : `AI review check failed: ${result.message}`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "AI review health check failed");
@@ -524,7 +514,6 @@ export default function Dashboard() {
         }),
       });
       setPreview(data);
-      showToast("success", "Evidence preview generated.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to generate evidence preview");
     }
@@ -564,7 +553,7 @@ export default function Dashboard() {
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      showToast("success", "Evidence artifact downloaded.");
+      showToast("success", "Evidence downloaded");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to download evidence");
     }
@@ -576,57 +565,39 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50/70 font-sans text-slate-900 antialiased selection:bg-slate-900 selection:text-white">
+    <div className="min-h-screen bg-[#fafafa] font-sans text-zinc-900 antialiased selection:bg-zinc-900 selection:text-white">
       {/* Toast Notification */}
       {toast && (
         <div
           aria-live="polite"
-          className={`fixed right-5 top-5 z-60 flex items-center gap-2.5 rounded-xl border px-4 py-3 text-xs font-bold shadow-xl transition-all ${
-            toast.tone === "success"
-              ? "border-emerald-200 bg-white text-emerald-800 ring-1 ring-emerald-600/10"
-              : "border-rose-200 bg-white text-rose-800 ring-1 ring-rose-600/10"
-          }`}
+          className="fixed right-5 top-5 z-60 flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2 text-xs font-medium text-zinc-900 shadow-md"
           role="status"
         >
-          {toast.tone === "success" ? (
-            <CheckCircleIcon className="h-4 w-4 text-emerald-600" />
-          ) : (
-            <AlertCircleIcon className="h-4 w-4 text-rose-600" />
-          )}
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              toast.tone === "success" ? "bg-emerald-500" : "bg-rose-500"
+            }`}
+          />
           <span>{toast.message}</span>
         </div>
       )}
 
-      {/* Main Header */}
-      <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-white shadow-xs">
-                <ShieldIcon className="h-5 w-5" />
-              </div>
-              <div>
-                <span className="text-sm font-black tracking-tight text-slate-950">DiffGuard</span>
-                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
-                  SecOps
-                </span>
-              </div>
+      {/* Clean Top Navigation */}
+      <header className="sticky top-0 z-30 border-b border-zinc-200/80 bg-white/95 backdrop-blur-xs">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <ShieldIcon className="h-4 w-4 text-zinc-900" />
+              <span className="text-sm font-semibold tracking-tight text-zinc-900">DiffGuard</span>
             </div>
 
             {selected && (
-              <div className="hidden sm:flex items-center gap-2 border-l border-slate-200 pl-4 text-xs font-semibold text-slate-600">
-                <span className="text-slate-400">/</span>
-                <span className="font-bold text-slate-900">{selected.fullName}</span>
-                <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                    isEnforcing
-                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20"
-                      : "bg-amber-50 text-amber-700 ring-1 ring-amber-600/20"
-                  }`}
-                >
+              <div className="flex items-center gap-2 border-l border-zinc-200 pl-3 text-xs text-zinc-500">
+                <span className="font-medium text-zinc-900">{selected.fullName}</span>
+                <span className="flex items-center gap-1 font-mono text-[11px]">
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      isEnforcing ? "bg-emerald-600" : "bg-amber-500"
+                      isEnforcing ? "bg-emerald-500" : "bg-amber-500"
                     }`}
                   />
                   {isEnforcing ? "Enforcing" : "Advisory"}
@@ -635,17 +606,14 @@ export default function Dashboard() {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4 text-xs text-zinc-500">
             {currentUser && (
-              <div className="hidden md:flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">
-                  {currentUser.email.slice(0, 1).toUpperCase()}
-                </span>
-                <span className="truncate max-w-[180px]">{currentUser.email}</span>
-              </div>
+              <span className="hidden sm:inline font-mono text-[11px] text-zinc-400">
+                {currentUser.email}
+              </span>
             )}
             <button
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900 focus:ring-2 focus:ring-slate-900 focus:outline-hidden"
+              className="font-medium text-zinc-600 hover:text-zinc-900 transition"
               onClick={() => void signOut()}
               type="button"
             >
@@ -655,32 +623,26 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* GitHub Reconnect Warning Banner */}
+      {/* GitHub Reauth Alert */}
       {githubReauthRequired && (
-        <aside aria-label="GitHub reconnection notice" className="border-b border-amber-200 bg-amber-50">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-6 py-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-amber-950">
-              <AlertTriangleIcon className="h-4 w-4 shrink-0 text-amber-700" />
-              <span>
-                GitHub authorization token expired. Reconnect your GitHub account to continue discovering and reviewing repositories.
-              </span>
-            </div>
+        <aside aria-label="GitHub reconnection notice" className="border-b border-amber-200 bg-amber-50/50 py-2.5 px-6">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 text-xs text-amber-900">
+            <span>GitHub token expired. Reconnect to resume review webhook dispatch and repo discovery.</span>
             <button
-              className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-bold text-white shadow-2xs transition hover:bg-slate-800 disabled:opacity-50"
+              className="rounded bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
               disabled={isReconnectingGithub}
               onClick={() => void reconnectGithub()}
               type="button"
             >
-              <GithubIcon className="h-3.5 w-3.5" />
               {isReconnectingGithub ? "Connecting..." : "Reconnect GitHub"}
             </button>
           </div>
         </aside>
       )}
 
-      {/* Main Workspace Layout */}
-      <main className="mx-auto grid max-w-7xl gap-6 px-6 py-6 lg:grid-cols-[280px_1fr]">
-        {/* Sidebar */}
+      {/* Main Body */}
+      <main className="mx-auto grid max-w-6xl gap-8 px-6 py-8 lg:grid-cols-[220px_1fr]">
+        {/* Left Column: Repository Navigation */}
         <RepositorySidebar
           discoveryOpen={Boolean(discoveredRepos)}
           onConnect={() => void discoverGithubRepositories()}
@@ -694,22 +656,18 @@ export default function Dashboard() {
           status={status}
         />
 
-        {/* Content Area */}
+        {/* Right Column: Repository Workspace */}
         <div className="min-w-0 space-y-6">
-          {/* Error Banner with Retry */}
           {error && (
             <div
               aria-live="assertive"
-              className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/70 p-4 text-xs font-semibold text-rose-800"
+              className="flex items-center justify-between rounded-md border border-rose-200 bg-rose-50/50 px-3.5 py-2.5 text-xs text-rose-800"
               role="alert"
             >
-              <div className="flex items-center gap-2">
-                <AlertCircleIcon className="h-4 w-4 shrink-0 text-rose-600" />
-                <span>{error}</span>
-              </div>
+              <span>{error}</span>
               {selectedId && (
                 <button
-                  className="rounded-md border border-rose-300 bg-white px-2.5 py-1 text-xs font-bold text-rose-800 hover:bg-rose-50"
+                  className="font-semibold text-rose-900 underline hover:no-underline"
                   onClick={() => void loadRepository(selectedId)}
                   type="button"
                 >
@@ -719,18 +677,13 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Discovery Panel */}
+          {/* Discovery Drawer / Modal */}
           {discoveredRepos ? (
-            <section className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-xs">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900">Connect GitHub Repositories</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Select a repository with the DiffGuard GitHub App installed to begin automatic PR reviews.
-                  </p>
-                </div>
+            <section className="rounded-lg border border-zinc-200 bg-white p-5">
+              <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+                <h2 className="text-sm font-semibold text-zinc-900">Connect Repositories</h2>
                 <button
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  className="text-xs text-zinc-500 hover:text-zinc-900"
                   onClick={() => setDiscoveredRepos(null)}
                   type="button"
                 >
@@ -738,57 +691,44 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              {discoveredRepos.length > 3 && (
-                <div className="mt-4">
+              {discoveredRepos.length > 4 && (
+                <div className="mt-3">
                   <input
-                    className="w-full rounded-md border border-slate-200 bg-slate-50/50 py-1.5 px-3 text-xs placeholder:text-slate-400 focus:bg-white focus:outline-hidden"
+                    className="w-full rounded border border-zinc-200 bg-zinc-50/50 px-3 py-1.5 text-xs placeholder:text-zinc-400 focus:bg-white focus:outline-hidden"
                     onChange={(e) => setDiscoveryFilter(e.target.value)}
-                    placeholder="Search discovered repositories..."
+                    placeholder="Filter repositories..."
                     value={discoveryFilter}
                   />
                 </div>
               )}
 
               {filteredDiscovered.length === 0 ? (
-                <div className="mt-6 rounded-lg border border-dashed border-slate-200 p-8 text-center">
-                  <GithubIcon className="mx-auto h-8 w-8 text-slate-400" />
-                  <p className="mt-2 text-xs font-semibold text-slate-600">
-                    No repositories found matching your search.
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Ensure the DiffGuard GitHub App is installed on your GitHub organization or user account.
-                  </p>
-                </div>
+                <p className="py-8 text-center text-xs text-zinc-500">
+                  No repositories found. Ensure the DiffGuard GitHub App is installed.
+                </p>
               ) : (
-                <div className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200">
+                <div className="mt-3 divide-y divide-zinc-100">
                   {filteredDiscovered.map((repo) => (
                     <div
-                      className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-slate-50/50 transition"
+                      className="flex items-center justify-between py-3"
                       key={repo.githubRepositoryId}
                     >
                       <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900 text-sm">{repo.fullName}</span>
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-                            {repo.permission}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 text-xs text-slate-500">
-                          {repo.isInstalledInDiffguard
-                            ? "✓ DiffGuard App installed"
-                            : "⚠ App not installed on GitHub repo"}
+                        <p className="text-xs font-medium text-zinc-900">{repo.fullName}</p>
+                        <p className="text-[11px] text-zinc-400">
+                          {repo.isInstalledInDiffguard ? "App installed" : "App not installed on repo"} · {repo.permission}
                         </p>
                       </div>
 
                       <button
-                        className={`rounded-lg px-4 py-1.5 text-xs font-bold transition shadow-2xs ${
+                        className={`rounded px-3 py-1 text-xs font-medium transition ${
                           repo.isConnected
-                            ? "border border-slate-200 bg-slate-100 text-slate-500 cursor-default"
+                            ? "bg-zinc-100 text-zinc-400 cursor-default"
                             : !repo.isInstalledInDiffguard
-                            ? "bg-slate-100 text-slate-400 cursor-not-allowed"
+                            ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
                             : repo.canConnect
-                            ? "bg-slate-900 text-white hover:bg-slate-800"
-                            : "border border-amber-200 bg-amber-50 text-amber-800 cursor-not-allowed"
+                            ? "bg-zinc-900 text-white hover:bg-zinc-800"
+                            : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
                         }`}
                         disabled={repo.isConnected || !repo.isInstalledInDiffguard || !repo.canConnect}
                         onClick={() => void connectGithubRepository(repo.githubRepositoryId)}
@@ -797,10 +737,10 @@ export default function Dashboard() {
                         {repo.isConnected
                           ? "Connected"
                           : !repo.isInstalledInDiffguard
-                          ? "Install App First"
+                          ? "Install App"
                           : repo.canConnect
-                          ? "Connect Repository"
-                          : "Admin Permission Needed"}
+                          ? "Connect"
+                          : "Admin required"}
                       </button>
                     </div>
                   ))}
@@ -808,342 +748,201 @@ export default function Dashboard() {
               )}
             </section>
           ) : !selected ? (
-            <div className="flex min-h-[400px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/60 p-8 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500">
-                <ShieldIcon className="h-6 w-6" />
-              </div>
-              <h3 className="mt-4 text-base font-bold text-slate-900">
-                {selectedId ? "Loading Repository..." : "No Repository Selected"}
-              </h3>
-              <p className="mt-1 max-w-sm text-xs text-slate-500">
-                {selectedId
-                  ? "Fetching review history, pilot status, and security metrics."
-                  : "Choose an authorized repository from the sidebar or connect a new GitHub repository."}
+            <div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center">
+              <p className="text-sm font-medium text-zinc-700">
+                {selectedId ? "Loading repository..." : "Select a repository"}
+              </p>
+              <p className="mt-1 text-xs text-zinc-400">
+                Choose a repository from the left sidebar to inspect reviews and pilot status.
               </p>
             </div>
           ) : (
             <>
-              {/* Stat Cards Overview */}
-              <section aria-label="Repository overview metrics" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-xs">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                    Total Review Runs
-                  </p>
-                  <p className="mt-1 text-2xl font-black text-slate-900">
-                    {metrics?.totalRuns ?? 0}
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-400">Continuous SAST evaluations</p>
-                </div>
-
-                <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-xs">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                    Worker Retry Rate
-                  </p>
-                  <p className="mt-1 text-2xl font-black text-slate-900">
-                    {Math.round((metrics?.retryRate ?? 0) * 100)}%
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-400">Zero retry queue contention</p>
-                </div>
-
-                <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-xs">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                    GitHub Failures
-                  </p>
-                  <p className="mt-1 text-2xl font-black text-slate-900">
-                    {metrics?.githubFailureCount ?? 0}
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-400">Upstream API exceptions</p>
-                </div>
-
-                <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-xs">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                    Files Analyzed
-                  </p>
-                  <p className="mt-1 text-2xl font-black text-slate-900">
-                    {selected.reviewRuns?.reduce((acc, r) => acc + r.analyzedFileCount, 0) ?? 0}
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    {metrics?.skippedFileCount ?? 0} files skipped by rule
+              {/* Clean Repository Summary Strip */}
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200/80 pb-4">
+                <div>
+                  <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
+                    {selected.fullName}
+                  </h1>
+                  <p className="mt-0.5 text-xs text-zinc-500">
+                    Check mode: <span className="font-mono text-zinc-700">{selected.checkRunMode}</span> · Drafts:{" "}
+                    <span className="font-mono text-zinc-700">{selected.draftPullRequestPolicy}</span> · Retention:{" "}
+                    <span className="font-mono text-zinc-700">{selected.retentionDays}d</span>
                   </p>
                 </div>
-              </section>
 
-              {/* Pilot Gate Command Center */}
+                <div className="flex items-center gap-6 text-xs">
+                  <div>
+                    <span className="text-zinc-400">Runs:</span>{" "}
+                    <span className="font-medium text-zinc-900">{metrics?.totalRuns ?? 0}</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-400">Reliability:</span>{" "}
+                    <span className="font-medium text-zinc-900">
+                      {pilotStatus ? `${(pilotStatus.reliability * 100).toFixed(0)}%` : "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-400">Gate:</span>{" "}
+                    <span
+                      className={`font-medium ${
+                        pilotStatus?.readyForEnforcement ? "text-emerald-600" : "text-amber-600"
+                      }`}
+                    >
+                      {pilotStatus?.status ?? "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Clean Pilot Gate Card */}
               {pilotStatus && (
                 <section
                   aria-labelledby="pilot-gate-heading"
-                  className={`rounded-xl border p-6 shadow-xs transition-all ${
-                    pilotStatus.readyForEnforcement
-                      ? "border-emerald-200 bg-emerald-50/60"
-                      : "border-amber-200 bg-amber-50/60"
-                  }`}
+                  className="rounded-lg border border-zinc-200 bg-white p-5 shadow-2xs"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-4 border-b border-black/5 pb-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-3">
                     <div>
-                      <div className="flex items-center gap-2">
-                        {pilotStatus.readyForEnforcement ? (
-                          <ShieldCheckIcon className="h-5 w-5 text-emerald-700" />
-                        ) : (
-                          <ShieldIcon className="h-5 w-5 text-amber-700" />
-                        )}
-                        <h2 className="text-base font-bold text-slate-900" id="pilot-gate-heading">
-                          {pilotStatus.readyForEnforcement
-                            ? "Pilot Gate: Ready for Enforcement"
-                            : "Pilot Gate: Collecting Ground Truth Evidence"}
-                        </h2>
-                      </div>
-                      <p className="mt-1 max-w-2xl text-xs text-slate-600">
-                        DiffGuard safeguards your engineering velocity: Check Runs will only block PRs once
-                        the review engine demonstrates ≥95% reliability and at least one rule achieves ≥90%
-                        human-confirmed precision.
+                      <h2 className="text-sm font-semibold text-zinc-900" id="pilot-gate-heading">
+                        Pilot Gate
+                      </h2>
+                      <p className="text-xs text-zinc-500">
+                        Zero-disruption policy: Requires ≥5 reviewed PRs, ≥95% engine reliability, and ≥1 rule with 10+ verified findings at ≥90% precision.
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
+                      {pilotStatus.canEnableEnforcing && selected.checkRunMode === "ADVISORY" && (
+                        <button
+                          className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 transition disabled:opacity-50"
+                          disabled={isSavingSettings}
+                          onClick={() => void updateSettings({ checkRunMode: "ENFORCING" })}
+                          type="button"
+                        >
+                          Enable Enforcing Mode
+                        </button>
+                      )}
                       <span
-                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${
-                          pilotStatus.readyForEnforcement
-                            ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-600/30"
-                            : "bg-amber-100 text-amber-900 ring-1 ring-amber-600/30"
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
+                          isEnforcing
+                            ? "bg-emerald-50 text-emerald-700"
+                            : pilotStatus.readyForEnforcement
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-amber-50 text-amber-700"
                         }`}
                       >
-                        {pilotStatus.status}
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            isEnforcing || pilotStatus.readyForEnforcement
+                              ? "bg-emerald-500"
+                              : "bg-amber-500"
+                          }`}
+                        />
+                        {isEnforcing ? "Enforcing Active" : pilotStatus.readyForEnforcement ? "Ready to Enforce" : "Collecting Evidence"}
                       </span>
                     </div>
                   </div>
 
-                  {/* 3 Milestone Cards */}
-                  <div className="mt-5 grid gap-4 sm:grid-cols-3">
-                    {/* Milestone 1: Distinct Reviewed PRs */}
-                    <div className="rounded-xl border border-black/5 bg-white p-4 shadow-2xs">
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-600">
-                        <span>Distinct PRs Reviewed</span>
-                        <span
-                          className={
-                            pilotStatus.reviewedPullRequestCount >=
-                            pilotStatus.thresholds.minimumReviewedPullRequests
-                              ? "text-emerald-700"
-                              : "text-amber-700"
-                          }
-                        >
-                          {pilotStatus.reviewedPullRequestCount >=
-                          pilotStatus.thresholds.minimumReviewedPullRequests
-                            ? "Target Met"
-                            : "Collecting"}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-2xl font-black text-slate-900">
-                        {pilotStatus.reviewedPullRequestCount}{" "}
-                        <span className="text-sm font-semibold text-slate-400">
-                          / {pilotStatus.thresholds.minimumReviewedPullRequests}
-                        </span>
-                      </div>
-                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-emerald-600 transition-all duration-500"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              (pilotStatus.reviewedPullRequestCount /
-                                pilotStatus.thresholds.minimumReviewedPullRequests) *
-                                100
-                            )}%`,
-                          }}
-                        />
-                      </div>
+                  <div className="mt-4 grid grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <p className="text-zinc-400">Distinct PRs</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-900">
+                        {pilotStatus.reviewedPullRequestCount} / {pilotStatus.thresholds.minimumReviewedPullRequests}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                        {pilotStatus.reviewedPullRequestCount >= pilotStatus.thresholds.minimumReviewedPullRequests
+                          ? "✓ Threshold met"
+                          : "Needs more PRs"}
+                      </p>
                     </div>
 
-                    {/* Milestone 2: Reliability */}
-                    <div className="rounded-xl border border-black/5 bg-white p-4 shadow-2xs">
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-600">
-                        <span>Engine Reliability</span>
-                        <span
-                          className={
-                            pilotStatus.reliability >= pilotStatus.thresholds.minimumReliability
-                              ? "text-emerald-700"
-                              : "text-rose-700"
-                          }
-                        >
-                          {pilotStatus.reliability >= pilotStatus.thresholds.minimumReliability
-                            ? "Target Met"
-                            : "Below 95%"}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-2xl font-black text-slate-900">
-                        {(pilotStatus.reliability * 100).toFixed(1)}%{" "}
-                        <span className="text-sm font-semibold text-slate-400">
-                          / {(pilotStatus.thresholds.minimumReliability * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            pilotStatus.reliability >= pilotStatus.thresholds.minimumReliability
-                              ? "bg-emerald-600"
-                              : "bg-rose-500"
-                          }`}
-                          style={{ width: `${Math.min(100, pilotStatus.reliability * 100)}%` }}
-                        />
-                      </div>
+                    <div>
+                      <p className="text-zinc-400">Reliability</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-900">
+                        {(pilotStatus.reliability * 100).toFixed(1)}%
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                        {pilotStatus.reliability >= pilotStatus.thresholds.minimumReliability
+                          ? "✓ ≥95% target"
+                          : "Below 95%"}
+                      </p>
                     </div>
 
-                    {/* Milestone 3: Eligible Rule Versions */}
-                    <div className="rounded-xl border border-black/5 bg-white p-4 shadow-2xs">
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-600">
-                        <span>Enforceable Rules</span>
-                        <span
-                          className={
-                            pilotStatus.eligibleRules.length > 0
-                              ? "text-emerald-700"
-                              : "text-amber-700"
-                          }
-                        >
-                          {pilotStatus.eligibleRules.length > 0 ? "Qualified" : "Needs 10+ Confirmed"}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-2xl font-black text-slate-900">
-                        {pilotStatus.eligibleRules.length}{" "}
-                        <span className="text-sm font-semibold text-slate-400">
-                          rule{pilotStatus.eligibleRules.length === 1 ? "" : "s"}
-                        </span>
-                      </div>
-                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-emerald-600 transition-all duration-500"
-                          style={{
-                            width: `${pilotStatus.eligibleRules.length > 0 ? 100 : 0}%`,
-                          }}
-                        />
-                      </div>
+                    <div>
+                      <p className="text-zinc-400">Enforceable Rules</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-900">
+                        {pilotStatus.eligibleRules.length}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                        {pilotStatus.eligibleRules.length > 0 ? "✓ 1 rule qualified" : "Needs 10+ verified findings"}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Active Blocker Warnings */}
                   {pilotStatus.blockers.length > 0 && (
-                    <div className="mt-4 rounded-xl border border-amber-200 bg-white p-4">
-                      <p className="text-xs font-bold text-amber-900">
-                        Remaining Requirements Before Enforcement:
-                      </p>
-                      <ul className="mt-2 space-y-1 text-xs text-amber-800">
+                    <div className="mt-4 border-t border-zinc-100 pt-3">
+                      <p className="text-[11px] font-medium text-amber-800">Remaining requirements:</p>
+                      <ul className="mt-1 list-disc pl-4 text-[11px] text-zinc-600">
                         {pilotStatus.blockers.map((b) => (
-                          <li className="flex items-start gap-1.5" key={b}>
-                            <AlertCircleIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-600" />
-                            <span>{b}</span>
-                          </li>
+                          <li key={b}>{b}</li>
                         ))}
                       </ul>
-                    </div>
-                  )}
-
-                  {/* Quick Enforcement Toggle Banner */}
-                  {pilotStatus.canEnableEnforcing && selected.checkRunMode === "ADVISORY" && (
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-300 bg-emerald-100/60 p-4">
-                      <div className="text-xs text-emerald-950">
-                        <span className="font-bold">Pilot Gate Unlocked:</span> You can now switch Check
-                        Runs to Enforcing mode to block pull requests containing verified security vulnerabilities.
-                      </div>
-                      <button
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-800 focus:ring-2 focus:ring-emerald-700 focus:outline-hidden disabled:opacity-50"
-                        disabled={isSavingSettings}
-                        onClick={() => void updateSettings({ checkRunMode: "ENFORCING" })}
-                        type="button"
-                      >
-                        <ShieldCheckIcon className="h-4 w-4" />
-                        Activate Enforcement Now
-                      </button>
-                    </div>
-                  )}
-
-                  {selected.checkRunMode === "ENFORCING" && (
-                    <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100/60 p-3 text-xs font-bold text-emerald-950">
-                      <ShieldCheckIcon className="h-4 w-4 text-emerald-700" />
-                      <span>
-                        Enforcing mode is active. Pull requests violating eligible rules will be blocked.
-                      </span>
                     </div>
                   )}
                 </section>
               )}
 
-              {/* Pilot Precision Table */}
+              {/* Clean Pilot Precision Table */}
               {pilotPrecision.length > 0 && (
                 <section
                   aria-labelledby="pilot-precision-heading"
-                  className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-xs"
+                  className="rounded-lg border border-zinc-200 bg-white p-5 shadow-2xs"
                 >
-                  <div className="border-b border-slate-100 pb-4">
-                    <h2 className="text-base font-bold text-slate-900" id="pilot-precision-heading">
-                      Pilot Precision by Security Rule
+                  <div className="border-b border-zinc-100 pb-3">
+                    <h2 className="text-sm font-semibold text-zinc-900" id="pilot-precision-heading">
+                      Rule Precision Matrix
                     </h2>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      Rules require at least 10 human-verified findings with ≥90% precision to become eligible for enforcement.
-                    </p>
                   </div>
 
-                  <div className="mt-4 overflow-x-auto">
+                  <div className="mt-3 overflow-x-auto">
                     <table className="w-full text-left text-xs">
-                      <caption className="sr-only">
-                        Pilot precision, verification counts, and enforcement eligibility by rule
-                      </caption>
-                      <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      <thead className="border-b border-zinc-100 text-[11px] font-medium text-zinc-400">
                         <tr>
-                          <th className="p-3">Rule Identifier</th>
-                          <th className="p-3">Total</th>
-                          <th className="p-3 text-emerald-700">Confirmed</th>
-                          <th className="p-3 text-rose-700">False Pos.</th>
-                          <th className="p-3 text-slate-400">Unverified</th>
-                          <th className="p-3">Precision</th>
-                          <th className="p-3 text-right">Gate Status</th>
+                          <th className="py-2 pr-3">Rule</th>
+                          <th className="py-2 pr-3">Total</th>
+                          <th className="py-2 pr-3">Confirmed</th>
+                          <th className="py-2 pr-3">False Pos.</th>
+                          <th className="py-2 pr-3">Unverified</th>
+                          <th className="py-2 pr-3">Precision</th>
+                          <th className="py-2 text-right">Gate Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-zinc-100 font-mono text-[11px]">
                         {pilotPrecision.map((rule) => {
                           const isEligible = pilotStatus?.eligibleRules.some(
                             (e) => e.ruleId === rule.ruleId && e.ruleVersion === rule.ruleVersion
                           );
 
                           return (
-                            <tr
-                              className={`transition hover:bg-slate-50/50 ${
-                                isEligible ? "bg-emerald-50/30" : ""
-                              }`}
-                              key={`${rule.ruleId}@${rule.ruleVersion}`}
-                            >
-                              <td className="p-3 font-mono font-medium text-slate-800">
+                            <tr key={`${rule.ruleId}@${rule.ruleVersion}`}>
+                              <td className="py-2.5 pr-3 font-medium text-zinc-800">
                                 {rule.ruleId}
-                                <span className="ml-1 text-[10px] text-slate-400">
-                                  @{rule.ruleVersion}
-                                </span>
+                                <span className="text-zinc-400">@{rule.ruleVersion}</span>
                               </td>
-                              <td className="p-3 font-semibold text-slate-700">{rule.totalFindings}</td>
-                              <td className="p-3 font-bold text-emerald-700">{rule.confirmedCount}</td>
-                              <td className="p-3 font-bold text-rose-700">{rule.falsePositiveCount}</td>
-                              <td className="p-3 text-slate-400">{rule.unverifiedCount}</td>
-                              <td className="p-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-slate-800">
-                                    {(rule.precision * 100).toFixed(0)}%
-                                  </span>
-                                  <div className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-100">
-                                    <div
-                                      className={`h-full rounded-full ${
-                                        rule.precision >= 0.9 ? "bg-emerald-600" : "bg-amber-500"
-                                      }`}
-                                      style={{ width: `${rule.precision * 100}%` }}
-                                    />
-                                  </div>
-                                </div>
+                              <td className="py-2.5 pr-3 text-zinc-600">{rule.totalFindings}</td>
+                              <td className="py-2.5 pr-3 text-emerald-600 font-semibold">{rule.confirmedCount}</td>
+                              <td className="py-2.5 pr-3 text-rose-600">{rule.falsePositiveCount}</td>
+                              <td className="py-2.5 pr-3 text-zinc-400">{rule.unverifiedCount}</td>
+                              <td className="py-2.5 pr-3 font-semibold text-zinc-800">
+                                {(rule.precision * 100).toFixed(0)}%
                               </td>
-                              <td className="p-3 text-right">
+                              <td className="py-2.5 text-right font-sans">
                                 {isEligible ? (
-                                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                                    <CheckIcon className="h-3 w-3" />
-                                    Eligible to Enforce
+                                  <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+                                    ● Eligible
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-                                    Advisory Only
-                                  </span>
+                                  <span className="text-zinc-400">Advisory</span>
                                 )}
                               </td>
                             </tr>

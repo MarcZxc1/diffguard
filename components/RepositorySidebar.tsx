@@ -2,13 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Repository } from "@/types";
-import {
-  GithubIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  ShieldCheckIcon,
-  ShieldAlertIcon,
-} from "./Icons";
+import { RefreshCwIcon, SearchIcon } from "./Icons";
 
 export function RepositorySidebar({
   discoveryOpen,
@@ -39,57 +33,41 @@ export function RepositorySidebar({
 
   return (
     <aside aria-label="Repositories" className="min-w-0 space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-          Repositories ({repositories.length})
-        </h2>
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+          Repositories
+        </span>
         <button
           aria-label="Refresh repository list"
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-xs transition hover:bg-slate-50 hover:text-slate-900 focus:ring-2 focus:ring-slate-900 focus:outline-hidden disabled:opacity-50"
+          className="text-zinc-400 hover:text-zinc-700 transition"
           disabled={isLoading}
           onClick={onRefresh}
           title="Refresh repositories"
           type="button"
         >
-          <RefreshCwIcon className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
+          <RefreshCwIcon className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
         </button>
       </div>
 
-      {repositories.length > 3 && (
+      {repositories.length > 4 && (
         <div className="relative">
-          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-400" />
           <input
-            className="w-full rounded-md border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs placeholder:text-slate-400 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 focus:outline-hidden"
+            className="w-full rounded border border-zinc-200 bg-white py-1 pl-7 pr-2.5 text-xs placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-hidden"
             onChange={(e) => setFilterQuery(e.target.value)}
-            placeholder="Filter repositories..."
+            placeholder="Search..."
             value={filterQuery}
           />
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="space-y-1">
         {isLoading && repositories.length === 0 && (
-          <div className="space-y-2">
-            {[1, 2].map((i) => (
-              <div
-                className="animate-pulse rounded-lg border border-slate-200 bg-white/60 p-3"
-                key={i}
-              >
-                <div className="h-4 w-3/4 rounded bg-slate-200" />
-                <div className="mt-2 h-3 w-1/3 rounded bg-slate-100" />
-              </div>
-            ))}
-          </div>
+          <p className="text-xs text-zinc-400 py-2">Loading...</p>
         )}
 
         {!isLoading && filtered.length === 0 && (
-          <div className="rounded-lg border border-dashed border-slate-200 bg-white/40 p-4 text-center">
-            <p className="text-xs text-slate-500">
-              {repositories.length === 0
-                ? "No repositories connected yet."
-                : "No matching repositories."}
-            </p>
-          </div>
+          <p className="text-xs text-zinc-400 py-2">No repositories.</p>
         )}
 
         {filtered.map((repository) => {
@@ -99,54 +77,38 @@ export function RepositorySidebar({
           return (
             <button
               aria-current={isSelected ? "true" : undefined}
-              className={`group relative w-full rounded-lg border p-3 text-left transition-all focus:ring-2 focus:ring-slate-900 focus:outline-hidden ${
+              className={`w-full rounded-md px-2.5 py-2 text-left text-xs transition flex flex-col gap-0.5 ${
                 isSelected
-                  ? "border-slate-900 bg-white shadow-sm ring-1 ring-slate-900"
-                  : "border-slate-200/90 bg-white/80 hover:border-slate-300 hover:bg-white"
+                  ? "bg-white border border-zinc-200 shadow-2xs font-medium text-zinc-950"
+                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
               }`}
               key={repository.id}
               onClick={() => onSelect(repository.id)}
               type="button"
             >
-              <div className="flex items-start justify-between gap-2">
-                <span className="truncate text-sm font-bold text-slate-900">
-                  {repository.fullName}
-                </span>
+              <div className="flex items-center justify-between gap-1.5 w-full">
+                <span className="truncate">{repository.fullName}</span>
                 <span
-                  className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                    isEnforcing
-                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20"
-                      : "bg-amber-50 text-amber-700 ring-1 ring-amber-600/20"
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    isEnforcing ? "bg-emerald-500" : "bg-amber-400"
                   }`}
-                  title={isEnforcing ? "Check Run Mode: Enforcing" : "Check Run Mode: Advisory"}
-                >
-                  {isEnforcing ? (
-                    <ShieldCheckIcon className="h-3 w-3" />
-                  ) : (
-                    <ShieldAlertIcon className="h-3 w-3" />
-                  )}
-                  {isEnforcing ? "Enforcing" : "Advising"}
-                </span>
+                  title={isEnforcing ? "Enforcing" : "Advisory"}
+                />
               </div>
-
-              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-                <span>{repository._count?.reviewRuns ?? 0} reviews</span>
-                {repository.llmReviewEnabled && (
-                  <span className="font-mono text-[10px] text-indigo-600">AI Active</span>
-                )}
-              </div>
+              <span className="text-[11px] text-zinc-400">
+                {repository._count?.reviewRuns ?? 0} reviews
+              </span>
             </button>
           );
         })}
       </div>
 
       <button
-        className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-white/40 p-3 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-white focus:ring-2 focus:ring-slate-900 focus:outline-hidden"
+        className="w-full rounded-md border border-dashed border-zinc-300 py-2 text-center text-xs font-medium text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 transition"
         onClick={onConnect}
         type="button"
       >
-        <GithubIcon className="h-4 w-4" />
-        Connect GitHub Repo
+        + Connect Repo
       </button>
     </aside>
   );
