@@ -25,7 +25,7 @@ import {
   scanPullRequest,
   type RuleFinding,
 } from "./rule-engine";
-import { runStructuredLlmReview } from "./llm-review.service";
+import { resolveLlmModel, runStructuredLlmReview } from "./llm-review.service";
 import { getPilotStatus } from "./pilot.service";
 
 export type ReviewRunJob = {
@@ -352,10 +352,7 @@ export async function processReviewRun(run: ReviewRunJob) {
     },
     configuration: run.ruleConfiguration,
   });
-  const effectiveModel =
-    run.repository.llmModel && run.repository.llmModel !== "gpt-5.6-sol"
-      ? run.repository.llmModel
-      : env.OPENAI_MODEL;
+  const effectiveModel = resolveLlmModel(run.repository.llmModel);
   const llmReview = await runStructuredLlmReview({
     enabled: run.repository.llmReviewEnabled,
     model: effectiveModel,

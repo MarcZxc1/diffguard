@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser, unauthorizedResponse, forbiddenResponse } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canManageRepository, recordAuditLog } from "@/services/repository-authorization.service";
-import { consumeAiHealthCheckRateLimit, testOpenAiReviewConfiguration } from "@/services/llm-review.service";
+import {
+  consumeAiHealthCheckRateLimit,
+  resolveLlmModel,
+  testOpenAiReviewConfiguration,
+} from "@/services/llm-review.service";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
@@ -24,10 +28,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     );
   }
 
-  const effectiveModel =
-    repository.llmModel && repository.llmModel !== "gpt-5.6-sol"
-      ? repository.llmModel
-      : process.env.OPENAI_MODEL || "auto:free";
+  const effectiveModel = resolveLlmModel(repository.llmModel);
   const result = await testOpenAiReviewConfiguration({ model: effectiveModel });
   await recordAuditLog({
     user,
