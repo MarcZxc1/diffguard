@@ -89,4 +89,98 @@ describe("runStructuredLlmReview", () => {
     expect(consumeAiHealthCheckRateLimit("manager-b:repo-a", 2_000)).toBe(0);
     expect(consumeAiHealthCheckRateLimit("manager-a:repo-a", 31_000)).toBe(0);
   });
+
+  it("supports custom baseUrl and parses markdown-fenced structured output with normalized fields", async () => {
+    let requestedUrl = "";
+    const result = await runStructuredLlmReview({
+      enabled: true,
+      headSha: "head123",
+      baseUrl: "https://api.bazaarlink.ai/v1",
+      apiKey: testOpenAiApiKey,
+      changedLines: [{
+        filePath: "src/database.ts",
+        lineNumber: 12,
+        content: "const query = `SELECT * FROM users WHERE id = ${id}`;",
+        changeType: "added",
+      }],
+      deterministicFindings: [],
+      fetchImpl: (async (url: string) => {
+        requestedUrl = url;
+        return new Response(JSON.stringify({
+          output: [{
+            type: "message",
+            content: [{
+              type: "output_text",
+              text: "```json\n" + JSON.stringify({
+                issues: [{
+                  file: "src/database.ts",
+                  line: 12,
+                  issue: "SQL Injection risk",
+                  snippet: "const query = `SELECT * FROM users WHERE id = ${id}`;",
+                  description: "Direct string interpolation into SQL query string.",
+                  solution: "Use parameterized queries.",
+                  severity: "high",
+                  confidence: 0.95,
+                }],
+              }) + "\n```",
+            }],
+          }],
+        }));
+      }) as unknown as typeof fetch,
+    });
+
+    expect(requestedUrl).toBe("https://api.bazaarlink.ai/v1/responses");
+    expect(result.state).toBe("SUCCEEDED");
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]).toMatchObject({
+      filePath: "src/database.ts",
+      lineNumber: 12,
+      title: "SQL Injection risk",
+      severity: "HIGH",
+      confidence: 0.95,
+      source: "LLM",
+    });
+  });
+
+  it("resolves unknown filePath when changedLines contains a single file", async () => {
+    const result = await runStructuredLlmReview({
+      enabled: true,
+      headSha: "head123",
+      apiKey: testOpenAiApiKey,
+      changedLines: [{
+        filePath: "src/api/auth.ts",
+        lineNumber: 42,
+        content: "const token = jwt.sign(user, 'hardcoded_secret');",
+        changeType: "added",
+      }],
+      deterministicFindings: [],
+      fetchImpl: (async () => {
+        return new Response(JSON.stringify({
+          output: [{
+            type: "message",
+            content: [{
+              type: "output_text",
+              text: JSON.stringify({
+                findings: [{
+                  filePath: "unknown",
+                  lineNumber: 42,
+                  title: "Hardcoded secret",
+                  evidence: "hardcoded_secret",
+                  explanation: "Secret should be loaded from env",
+                  remediation: "Use process.env.SECRET",
+                  severity: "CRITICAL",
+                  confidence: 0.9,
+                }],
+              }),
+            }],
+          }],
+        }));
+      }) as unknown as typeof fetch,
+    });
+
+    expect(result.state).toBe("SUCCEEDED");
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].filePath).toBe("src/api/auth.ts");
+    expect(result.findings[0].lineNumber).toBe(42);
+  });
 });

@@ -50,6 +50,16 @@ const envSchema = z.object({
     z.string().optional()
   ),
   OPENAI_MODEL: z.string().default("gpt-5.6-sol"),
+  OPENAI_BASE_URL: z.preprocess(
+    (val) => {
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        return trimmed === "" ? undefined : trimmed.replace(/\/+$/, "");
+      }
+      return val;
+    },
+    z.string().url().default("https://api.openai.com/v1")
+  ),
   DIFFGUARD_DEV_ENFORCEMENT_BYPASS: strictBoolean.default(false),
 }).superRefine((environment, context) => {
   if (
